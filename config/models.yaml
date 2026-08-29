@@ -1,0 +1,26 @@
+# Default order is designed to stay at $0 for inference when the provider's
+# free plan is available. OpenRouter's fallback uses model=openrouter/free.
+provider_order:
+  - groq
+  - openrouter
+  - gemini
+
+providers:
+  groq:
+    base_url: https://api.groq.com/openai/v1
+    api_key_env: GROQ_API_KEY
+    scout_model: qwen/qwen3.8-27b
+    editor_model: openai/gpt-oss-120b
+
+  openrouter:
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    scout_model: openrouter/free
+    editor_model: openrouter/free
+
+  gemini:
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    api_key_env: GEMINI_API_KEY
+    enabled_env: ENABLE_GEMINI_FALLBACK
+    scout_model: gemini-3.7-flash
+    editor_model: gemini-3.7-flash

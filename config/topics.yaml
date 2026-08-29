@@ -1,0 +1,57 @@
+lookback_hours: 72
+max_records_per_topic: 35
+
+# GDELT search strings are intentionally broad. The Scout is the semantic filter.
+topics:
+  ai_research_automation:
+    label: AI research automation
+    gdelt_query: '("AI research" OR "automated research" OR "AI scientist" OR "algorithm discovery" OR "theorem proving")'
+    keywords: ["ai scientist", "automated research", "research agent", "theorem", "algorithm discovery", "automated r&d"]
+
+  autonomous_agents:
+    label: Autonomous agents
+    gdelt_query: '("AI agent" OR "autonomous agent" OR "computer use agent" OR "coding agent" OR "agentic AI")'
+    keywords: ["agent", "computer use", "autonomous", "coding agent", "long horizon"]
+
+  ai_science_biology:
+    label: AI for science and biology
+    gdelt_query: '("AI drug discovery" OR "protein design" OR "AI biology" OR "AI chemistry" OR "AI materials" OR "genomics AI")'
+    keywords: ["protein", "drug", "biology", "genomics", "molecule", "chemistry", "materials"]
+
+  verification_scaffolding:
+    label: Verification and scaffolding
+    gdelt_query: '("AI verifier" OR "process supervision" OR "test-time compute" OR "formal verification AI" OR "AI evaluation scaffold")'
+    keywords: ["verifier", "verification", "process supervision", "test-time", "scaffold", "formal proof"]
+
+  model_behavior_interpretability:
+    label: Model behavior and interpretability
+    gdelt_query: '("AI interpretability" OR "mechanistic interpretability" OR "AI deception" OR "model behavior" OR "AI alignment")'
+    keywords: ["interpretability", "deception", "alignment", "model behavior", "situational awareness", "mechanistic"]
+
+  cyber_risk:
+    label: Cyber risk
+    gdelt_query: '("AI cybersecurity" OR "AI cyber attack" OR "AI vulnerability discovery" OR "autonomous hacking" OR "AI exploit")'
+    keywords: ["cyber", "vulnerability", "exploit", "hacking", "security"]
+
+  energy_infrastructure:
+    label: Energy and infrastructure
+    gdelt_query: '("AI data center power" OR "AI datacenter energy" OR "AI chips infrastructure" OR "AI nuclear power" OR "AI grid")'
+    keywords: ["datacenter", "data center", "power", "grid", "nuclear", "chip", "gpu", "infrastructure"]
+
+  legal_policy:
+    label: Major AI legal or policy conflicts
+    gdelt_query: '("AI regulation" OR "AI copyright lawsuit" OR "AI export controls" OR "AI antitrust" OR "AI law" OR "AI policy")'
+    keywords: ["regulation", "law", "court", "copyright", "export control", "antitrust", "policy"]
+
+arxiv:
+  enabled: true
+  max_results: 80
+  query: '(cat:cs.AI OR cat:cs.LG OR cat:cs.CL OR cat:cs.CR OR cat:q-bio.BM OR cat:q-bio.GN)'
+
+# Add direct RSS/Atom feeds here. These are optional and are treated as additional
+# discovery channels. Example:
+# rss_feeds:
+#   - name: Example Lab
+#     url: https://example.org/feed.xml
+#     default_topic: ai_research_automation
+rss_feeds: []
