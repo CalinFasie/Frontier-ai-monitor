@@ -59,7 +59,9 @@ jobs:
 
       - name: Commit generated brief
         run: |
-          if git diff --quiet -- briefs/; then
+          git add briefs/
+          
+          if git diff --cached --quiet; then
             echo "No brief file changes to commit."
             exit 0
           fi
@@ -67,6 +69,5 @@ jobs:
           git config user.name "frontier-ai-monitor[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add briefs/
           git commit -m "brief: $(date -u +%F)"
           git push
