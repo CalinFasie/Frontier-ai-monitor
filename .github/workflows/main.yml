@@ -1,0 +1,72 @@
+name: Frontier AI Monitor
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * *"
+      timezone: "Europe/Bucharest"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: frontier-ai-monitor
+  cancel-in-progress: false
+
+jobs:
+  run-monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run monitor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+          ENABLE_GEMINI_FALLBACK: ${{ vars.ENABLE_GEMINI_FALLBACK || '0' }}
+
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT || '587' }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+
+          TZ: Europe/Bucharest
+          LOOKBACK_HOURS: "72"
+          MAX_EDITOR_CANDIDATES: "10"
+          MAX_FINAL_ITEMS: "8"
+          MIN_DISCOVERY_SUCCESSES: "6"
+          MIN_DISCOVERED_SOURCES: "25"
+          SCOUT_CALL_DELAY_SECONDS: "8"
+
+        run: python -m frontier_monitor.main
+
+      - name: Commit generated brief
+        run: |
+          if git diff --quiet -- briefs/; then
+            echo "No brief file changes to commit."
+            exit 0
+          fi
+
+          git config user.name "frontier-ai-monitor[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add briefs/
+          git commit -m "brief: $(date -u +%F)"
+          git push
