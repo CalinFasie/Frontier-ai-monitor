@@ -42,7 +42,12 @@ def collect_gdelt(topic_key: str, query: str, lookback_hours: int, max_records: 
         "sort": "datedesc",
         "format": "json",
     }
-    r = requests.get(url, params=params, timeout=35, headers={"User-Agent": UA})
+    r = requests.get(
+    url,
+    params=params,
+    timeout=(8, 20),
+    headers={"User-Agent": UA},
+    )
     r.raise_for_status()
     payload = r.json()
     out: list[dict[str, Any]] = []
@@ -173,7 +178,7 @@ def collect_all(config: dict[str, Any], lookback_hours: int) -> tuple[list[dict[
         except Exception as exc:
             failures[f"gdelt:{key}"] = str(exc)
             log.exception("GDELT collection failed for %s", key)
-        time.sleep(0.15)
+        time.sleep(5.2)
 
     try:
         items = collect_arxiv(config.get("arxiv", {}), topics)
