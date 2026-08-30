@@ -170,6 +170,8 @@ def _candidate_packet(db: Database, candidate: dict[str, Any]) -> dict[str, Any]
         "scout_materiality": candidate.get("materiality"),
         "scout_novelty": candidate.get("novelty"),
         "evidence_stage": candidate.get("evidence_stage"),
+        "evidence_stage_upgraded_from": candidate.get("evidence_stage_upgraded_from"),
+        "evidence_acquisition": candidate.get("evidence_acquisition"),
         "evidence_profile": {k: v for k, v in profile.items() if k != "sources"},
         "source_assessments": profile.get("sources", []),
         "sources": sources,
@@ -251,6 +253,33 @@ _MEANINGFUL_DELTA_KINDS = {
 }
 
 
+_BENCHMARK_MARKERS = {
+    "benchmark", "leaderboard", "score", "accuracy", "pass@", "sota",
+    "state of the art", "cybergym", "swe-bench", "gpqa", "mmlu",
+}
+_PRACTICAL_CAPABILITY_MARKERS = {
+    "deployed", "deployment", "production", "real-world", "real world",
+    "independent test", "independently tested", "exploited", "campaign",
+    "end-to-end", "end to end", "autonomous operation", "used against",
+    "field test", "customer workload", "scientific validation",
+}
+
+
+def _benchmark_only_update(candidate: dict[str, Any], decision: dict[str, Any]) -> bool:
+    text = " ".join(
+        str(x or "")
+        for x in [
+            candidate.get("canonical_title"), candidate.get("what_happened"),
+            decision.get("canonical_title"), decision.get("what_changed"),
+            decision.get("state_delta"), decision.get("why_it_matters"),
+        ]
+    ).lower()
+    has_benchmark = any(marker in text for marker in _BENCHMARK_MARKERS)
+    has_practical = any(marker in text for marker in _PRACTICAL_CAPABILITY_MARKERS)
+    status = str(decision.get("status") or candidate.get("evidence_stage") or "").lower()
+    return has_benchmark and not has_practical and status in {"paper", "demo", "announcement"}
+
+
 def run_editor(pool: ProviderPool, db: Database, candidates: list[dict[str, Any]]) -> tuple[dict[str, Any], ProviderResult, list[dict[str, Any]]]:
     packets = [_candidate_packet(db, c) for c in candidates]
 
@@ -290,6 +319,16 @@ def run_editor(pool: ProviderPool, db: Database, candidates: list[dict[str, Any]
             if delta_kind not in (_MEANINGFUL_DELTA_KINDS | {"none"}):
                 delta_kind = "none"
             d["state_delta_kind"] = delta_kind
+            d["evidence_acquisition"] = candidates[idx].get("evidence_acquisition")
+
+            # The brief explicitly excludes incremental benchmark noise. A raw
+            # leaderboard/benchmark result can remain useful in the database,
+            # but it is not a material frontier delta unless the evidence also
+            # shows a practical capability/deployment change.
+            if _benchmark_only_update(candidates[idx], d):
+                d["decision"] = "IGNORE"
+                d["update_materiality"] = min(d["update_materiality"], 4.0)
+                d["state_gate_reason"] = "benchmark_only_without_practical_capability_shift"
 
             # A matched prior development with no actual state delta is not a
             # WATCH item. Persisting it as WATCH would refresh/overwrite state
@@ -341,9 +380,9 @@ def render_brief(editor: dict[str, Any], candidates: list[dict[str, Any]], db: D
     report_items = report_items[:max_items]
     date = utcnow().date().isoformat()
     if not report_items:
-        return f"# Frontier AI Brief â€” {date}\n\nNo material frontier developments since the previous review.\n\n## Bottom line\n\n{editor.get('bottom_line') or 'No evidence crossed the publication threshold.'}\n"
+        return f"# Frontier AI Brief - {date}\n\nNo material frontier developments since the previous review.\n\n## Bottom line\n\n{editor.get('bottom_line') or 'No evidence crossed the publication threshold.'}\n"
 
-    parts = [f"# Frontier AI Brief â€” {date}"]
+    parts = [f"# Frontier AI Brief - {date}"]
     for n, d in enumerate(report_items, 1):
         candidate = candidates[int(d["candidate_index"])]
         source_rows = db.get_sources(candidate.get("source_ids", []))
@@ -359,7 +398,12 @@ def render_brief(editor: dict[str, Any], candidates: list[dict[str, Any]], db: D
                     "\n**Evidence note:** Primary research result; this brief is reporting what the paper demonstrates/reports, "
                     "not claiming independent replication."
                     if (d.get("verification_gate") or {}).get("reason") == "primary_research_material_claim_not_replication"
-                    else ""
+                    else (
+                        "\n**Evidence note:** A DOI/indexed research record plus independent reputable coverage supports the existence and reported result; "
+                        "this is not a claim of independent replication."
+                        if (d.get("verification_gate") or {}).get("reason") == "research_index_plus_independent_secondary"
+                        else ""
+                    )
                 ),
                 "\n**Sources:**",
             ]
@@ -370,7 +414,7 @@ def render_brief(editor: dict[str, Any], candidates: list[dict[str, Any]], db: D
                 continue
             seen_urls.add(s["url"])
             label = s.get("publisher") or s.get("title") or "Source"
-            parts.append(f"- [{label}]({s['url']}) â€” {clip(s.get('title'), 150)}")
+            parts.append(f"- [{label}]({s['url']}) - {clip(s.get('title'), 150)}")
     parts.extend(["\n## Bottom line", "", editor.get("bottom_line") or "The items above crossed the materiality threshold."])
     return "\n".join(parts).strip() + "\n"
 
