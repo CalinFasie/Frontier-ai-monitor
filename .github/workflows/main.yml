@@ -16,7 +16,7 @@ concurrency:
 jobs:
   run-monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -50,8 +50,9 @@ jobs:
           MAX_FINAL_ITEMS: "8"
           MIN_DISCOVERY_SUCCESSES: "3"
           MIN_DISCOVERED_SOURCES: "25"
-          SCOUT_CALL_DELAY_SECONDS: "8"
+          SCOUT_CALL_DELAY_SECONDS: "30"
           EDITOR_CALL_DELAY_SECONDS: "65"
+          MIN_SCOUT_SUCCESSES: "6"
         run: python -m frontier_monitor.main
 
       - name: Commit generated brief
