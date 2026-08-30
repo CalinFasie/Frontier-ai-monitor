@@ -6,6 +6,14 @@ Select only candidate developments that could plausibly change a sophisticated o
 
 Ignore routine product updates, minor model launches, ordinary funding, shallow partnerships, speculative commentary, and incremental benchmark noise.
 
+Also normally ignore:
+- opinion pieces;
+- public warnings or forecasts without new evidence;
+- open letters that do not trigger binding action;
+- a public figure changing their view on AI policy;
+- generic calls for more/less regulation.
+These are candidates only if they are coupled to a concrete legal/policy action, major capital/deployment commitment, or materially new evidence.
+
 Cluster multiple sources that describe the same underlying development. Distinguish announcement from demonstration, independent verification, deployment, enactment, or court ruling.
 
 Return JSON only with this shape:
@@ -20,7 +28,7 @@ Return JSON only with this shape:
       "materiality": 0,
       "novelty": 0,
       "confidence": "high|medium|low",
-      "evidence_stage": "rumor|announcement|paper|demo|independent_confirmation|deployed|incident_confirmed|infrastructure_commitment|enacted|court_ruling"
+      "evidence_stage": "rumor|announcement|paper|demo|independent_confirmation|deployed|incident_confirmed|infrastructure_commitment|enacted|court_ruling|regulatory_order"
     }
   ]
 }
