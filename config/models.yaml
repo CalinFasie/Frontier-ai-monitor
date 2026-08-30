@@ -9,18 +9,29 @@ providers:
   groq:
     base_url: https://api.groq.com/openai/v1
     api_key_env: GROQ_API_KEY
+    roles: [scout, editor]
     scout_model: qwen/qwen3.8-27b
     editor_model: openai/gpt-oss-120b
+    scout_max_tokens: 850
+    editor_max_tokens: 800
 
   openrouter:
     base_url: https://openrouter.ai/api/v1
     api_key_env: OPENROUTER_API_KEY
+    # Random free routing is acceptable for high-recall scouting, but not for
+    # the final editorial judgment because the actual model can change each run.
+    roles: [scout]
     scout_model: openrouter/free
     editor_model: openrouter/free
+    scout_max_tokens: 850
+    editor_max_tokens: 800
 
   gemini:
     base_url: https://generativelanguage.googleapis.com/v1beta/openai
     api_key_env: GEMINI_API_KEY
     enabled_env: ENABLE_GEMINI_FALLBACK
+    roles: [scout, editor]
     scout_model: gemini-3.7-flash
     editor_model: gemini-3.7-flash
+    scout_max_tokens: 850
+    editor_max_tokens: 800
