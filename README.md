@@ -314,3 +314,30 @@ Once the base pipeline is stable, the highest-value improvements are:
 ## Hard-zero billing note
 
 `openrouter/free` is explicitly priced at zero by OpenRouter. Groq's configured models are available under the Groq Free Plan, but whether a Groq account/project can incur paid usage is an account/billing setting outside this repository. If you require a **hard monetary guarantee**, use an account/project with billing disabled or set `provider_order` to only `openrouter`. Do not enable Gemini fallback unless you have verified that the specific Gemini project/model is on a zero-cost tier for your usage.
+
+## Deterministic primary-source verification gate
+
+Before a model-proposed `REPORT` is published, `frontier_monitor/evidence.py`
+applies a deterministic evidence gate. It classifies linked sources as official
+primary, research primary, organization/self-claim primary, reputable secondary,
+or other secondary. The default policy lives in `config/evidence.yaml`.
+
+Key defaults:
+- `materiality >= 7` and `evidence_strength >= 7` are mandatory.
+- announcements and rumors cannot be published directly.
+- enacted law / court ruling: official source OR two independent reputable secondaries.
+- paper: primary research + independent reputable secondary, or two independent primary research organizations.
+- deployed / independently confirmed / confirmed incident: primary + independent reputable secondary, or two independent reputable secondaries.
+- a company/lab source is primary for its own claim, but never counts as independent confirmation of itself.
+
+A failed gate downgrades `REPORT` to `WATCH`; it does not discard the development.
+The decision JSON persisted in Postgres records the gate reason and evidence profile.
+
+Direct RSS feeds can declare `evidence_role: official` or
+`evidence_role: primary_claim` in `config/topics.yaml` without a database migration.
+
+## Evidence acquisition (v4)
+
+Before the Editor runs, each Scout candidate is now enriched from the recent Postgres source corpus. If the evidence profile is still weak for the candidate's claimed stage, the pipeline performs a targeted Google News RSS query; paper candidates also receive a targeted arXiv lookup. Newly found sources are persisted normally and attached to the candidate only when their title/snippet is sufficiently related.
+
+The deterministic gate is type-aware. In particular, a high-materiality paper (`materiality >= 8`, `evidence_strength >= 7`) may be reported when the primary research object is present even without independent replication. The rendered brief labels this case explicitly as a primary-research result, not an independently replicated fact. Announcements remain non-publishable by default; confirmed incidents and deployments still require independent corroboration; official legal actions can be established by authoritative official sources.
