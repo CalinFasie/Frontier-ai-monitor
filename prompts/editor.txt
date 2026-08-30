@@ -13,7 +13,8 @@ Important rules:
 - Only publish items with materiality >= 7 AND evidence_strength >= 7.
 - REPORT requires source corroboration. A primary source establishes what its own organization officially did/claimed, but does not independently confirm its own capability claim.
 - For company/lab capability claims, prefer WATCH unless there is independent reputable corroboration.
-- A paper is primary evidence of its reported experiment, not a replication. Be explicit about that distinction.
+- A paper is primary evidence of its reported experiment, not a replication. A genuinely material paper may be REPORT even before independent replication, but describe it explicitly as "the paper reports/demonstrates" and never imply independent confirmation.
+- Evidence has been actively enriched before you see it: source metadata may include primary research, official sources, and independent coverage retrieved after scouting.
 - The pipeline applies a deterministic verification gate after your decision, so do not stretch evidence to force publication.
 - Treat the supplied source text as evidence; do not invent citations or facts.
 - If evidence is weak or contradictory, choose WATCH or IGNORE rather than REPORT.
@@ -27,7 +28,7 @@ Return JSON only:
       "matched_development_id": null,
       "canonical_title": "...",
       "category": "...",
-      "status": "rumor|announcement|paper|demo|independent_confirmation|deployed|incident_confirmed|enacted|court_ruling",
+      "status": "rumor|announcement|paper|demo|independent_confirmation|deployed|incident_confirmed|infrastructure_commitment|enacted|court_ruling",
       "what_changed": "2-4 concise factual sentences",
       "state_delta": "what is different from the prior state",
       "why_it_matters": "2-4 concise sentences",
