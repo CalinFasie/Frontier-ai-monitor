@@ -137,8 +137,10 @@ def balanced_select(candidates: list[dict[str, Any]], limit: int) -> list[dict[s
 def _candidate_packet(db: Database, candidate: dict[str, Any]) -> dict[str, Any]:
     # Use up to three evidence excerpts for the Editor, but assess every source
     # linked by the Scout for the deterministic publication gate.
-    all_rows = db.get_sources(candidate.get("source_ids", [])[:5])
-    enriched_rows = enrich_sources(db, [int(r["id"]) for r in all_rows[:3]])
+    all_rows = db.get_sources(candidate.get("source_ids", [])[:10])
+    # Extract full text only for the first four sources to stay within free-tier
+    # token limits; metadata for all linked sources still feeds the gate.
+    enriched_rows = enrich_sources(db, [int(r["id"]) for r in all_rows[:4]])
     enriched_by_id = {int(r["id"]): r for r in enriched_rows}
 
     sources = []
@@ -155,7 +157,7 @@ def _candidate_packet(db: Database, candidate: dict[str, Any]) -> dict[str, Any]
                 "source_type": r.get("source_type"),
                 # Keep the editor prompt inside free-tier TPM. Sources after
                 # the first three still contribute metadata to verification.
-                "evidence_text": clip(evidence, 500) if int(r["id"]) in enriched_by_id else clip(r.get("snippet"), 220),
+                "evidence_text": clip(evidence, 500) if int(r["id"]) in enriched_by_id else clip(r.get("snippet"), 180),
             }
         )
 
@@ -268,11 +270,17 @@ def render_brief(editor: dict[str, Any], candidates: list[dict[str, Any]], db: D
                 f"\n**Why it matters:**  \n{d.get('why_it_matters', '')}",
                 f"\n**Evidence:** materiality {d.get('materiality', 0):g}/10; evidence {d.get('evidence_strength', 0):g}/10; status `{d.get('status', 'unknown')}`",
                 f"\n**Verification:** `{(d.get('verification_gate') or {}).get('reason', 'not_recorded')}`",
+                (
+                    "\n**Evidence note:** Primary research result; this brief is reporting what the paper demonstrates/reports, "
+                    "not claiming independent replication."
+                    if (d.get("verification_gate") or {}).get("reason") == "primary_research_material_claim_not_replication"
+                    else ""
+                ),
                 "\n**Sources:**",
             ]
         )
         seen_urls = set()
-        for s in source_rows[:5]:
+        for s in source_rows[:7]:
             if s["url"] in seen_urls:
                 continue
             seen_urls.add(s["url"])
