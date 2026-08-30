@@ -58,6 +58,10 @@ primary_claim_publishers:
   - xai
   - mistral ai
   - hugging face
+  - spacex
+  - cursor
+  - anysphere
+  - ptc
 
 primary_claim_domains:
   - openai.com
@@ -71,6 +75,10 @@ primary_claim_domains:
   - x.ai
   - mistral.ai
   - huggingface.co
+  - spacex.com
+  - cursor.com
+  - anysphere.com
+  - ptc.com
 
 # A conservative allow-list. Unknown outlets can still be shown to the Editor,
 # but do not satisfy the deterministic publication gate by themselves.
@@ -122,3 +130,7 @@ reputable_secondary_domains:
   - bleepingcomputer.com
   - therecord.media
   - krebsonsecurity.com
+
+# Additional primary-claim organizations useful for infrastructure/cyber monitoring.
+# These establish what the organization itself says or discloses; they are not
+# independent confirmation of the claim.
