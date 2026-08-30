@@ -3,12 +3,15 @@ from __future__ import annotations
 import logging
 import re
 import time
-from datetime import timedelta
+from datetime import datetime, timezone
+from html import unescape
 from typing import Any
 
-from .collectors import collect_arxiv, collect_google_news
+import requests
+
+from .collectors import UA, collect_arxiv, collect_google_news
 from .evidence import evidence_profile
-from .utils import compact_ws, title_similarity, utcnow
+from .utils import compact_ws, fingerprint, title_similarity, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -130,19 +133,92 @@ def _targeted_arxiv_cfg(candidate: dict[str, Any]) -> dict[str, Any] | None:
     terms = _query_terms(candidate, 5)
     if not terms:
         return None
-    # One distinctive token plus a few title tokens is much more reliable than
-    # attempting to quote a model-generated canonical title verbatim.
-    clauses = [f'all:"{t}"' for t in terms[:3]]
+    # V5 used AND across the first three model-generated title terms. That was
+    # too brittle: canonical titles often contain paraphrases ("reduces",
+    # "costs") that are absent from the actual paper title. Search first by the
+    # most distinctive token and let title/source relevance filter the results.
     return {
         "enabled": True,
-        "max_results": 12,
-        "query": " AND ".join(clauses),
+        "max_results": 20,
+        "query": f'all:"{terms[0]}"',
     }
+
+
+def _strip_markup(value: str | None) -> str:
+    if not value:
+        return ""
+    return compact_ws(unescape(re.sub(r"<[^>]+>", " ", value)))
+
+
+def _crossref_date(item: dict[str, Any]) -> datetime | None:
+    for key in ("published-online", "published-print", "published", "created"):
+        block = item.get(key) or {}
+        parts = block.get("date-parts") if isinstance(block, dict) else None
+        if parts and parts[0]:
+            vals = list(parts[0]) + [1, 1]
+            try:
+                return datetime(int(vals[0]), int(vals[1]), int(vals[2]), tzinfo=timezone.utc)
+            except Exception:
+                pass
+        if key == "created" and isinstance(block, dict) and block.get("date-time"):
+            try:
+                return datetime.fromisoformat(str(block["date-time"]).replace("Z", "+00:00"))
+            except Exception:
+                pass
+    return None
+
+
+def collect_crossref_candidate(candidate: dict[str, Any], max_results: int = 6) -> list[dict[str, Any]]:
+    """Resolve a likely scholarly work by title without requiring an API key.
+
+    Crossref is used as a fallback when the paper is not on arXiv or when a
+    model-generated canonical title makes arXiv keyword search brittle. Records
+    with an abstract count as primary-research evidence; metadata-only records
+    are kept as research-index evidence and cannot, by themselves, prove the
+    paper's substantive claims.
+    """
+    title = compact_ws(candidate.get("canonical_title"))
+    if not title:
+        return []
+    r = requests.get(
+        "https://api.crossref.org/works",
+        params={"query.title": title, "rows": max_results},
+        timeout=(6, 20),
+        headers={"User-Agent": UA},
+    )
+    r.raise_for_status()
+    items = ((r.json() or {}).get("message") or {}).get("items") or []
+    out: list[dict[str, Any]] = []
+    for item in items:
+        titles = item.get("title") or []
+        work_title = compact_ws(titles[0] if titles else "")
+        doi = compact_ws(item.get("DOI"))
+        if not work_title or not doi:
+            continue
+        sim = title_similarity(title, work_title)
+        candidate_tokens = set(_tokens(title))
+        work_tokens = set(_tokens(work_title))
+        overlap = len(candidate_tokens & work_tokens) / max(1, min(len(candidate_tokens), 8))
+        if sim < 0.43 and overlap < 0.45:
+            continue
+        abstract = _strip_markup(item.get("abstract"))
+        url = f"https://doi.org/{doi}"
+        out.append({
+            "fingerprint": fingerprint(url, work_title),
+            "url": url,
+            "title": work_title,
+            "publisher": item.get("publisher") or "Crossref",
+            "published_at": _crossref_date(item),
+            "category_hint": candidate.get("category") or "ai_research_automation",
+            "source_type": "crossref_research" if len(abstract) >= 120 else "crossref_index",
+            "snippet": abstract[:1600] if abstract else f"DOI metadata record for {work_title}",
+        })
+    return out
 
 
 def _need_targeted_search(candidate: dict[str, Any], profile: dict[str, Any]) -> bool:
     stage = str(candidate.get("evidence_stage") or "").lower()
-    if stage == "paper" and int(profile.get("primary_research", 0)) < 1:
+    if stage == "paper" and int(profile.get("primary_research", 0)) < 1 and int(profile.get("primary_research_index", 0)) < 1:
         return True
     if stage in {"incident_confirmed", "deployed", "independent_confirmation", "demo"}:
         return int(profile.get("independent_reputable_secondary_orgs", 0)) < 2
@@ -280,6 +356,27 @@ def acquire_candidate_evidence(
             except Exception as exc:
                 log.info("Targeted arXiv evidence search failed for %s: %s", candidate.get("canonical_title"), exc)
 
+    # If arXiv did not resolve the scholarly object, try a DOI/title index. This
+    # catches conference/journal papers and canonical-title paraphrases.
+    profile_after_arxiv = evidence_profile(db.get_sources(all_ids))
+    if stage in {"paper", "announcement"} and int(profile_after_arxiv.get("primary_research", 0)) < 1:
+        try:
+            targeted_attempted.append("crossref")
+            items = collect_crossref_candidate(candidate, 6)
+            new_rows = []
+            for item in items:
+                sid = db.upsert_source(item)
+                row = dict(item)
+                row["id"] = sid
+                new_rows.append(row)
+            for row in _relevant(candidate, new_rows, limit=3):
+                sid = int(row["id"])
+                if sid not in all_ids:
+                    all_ids.append(sid)
+                    targeted_added += 1
+        except Exception as exc:
+            log.info("Targeted Crossref evidence search failed for %s: %s", candidate.get("canonical_title"), exc)
+
     # Keep packets bounded. Prefer original Scout evidence, then highest-scoring
     # acquired evidence.
     original_set = set(original_ids)
@@ -291,9 +388,20 @@ def acquire_candidate_evidence(
     candidate["source_ids"] = final_ids
 
     final_profile = evidence_profile(db.get_sources(final_ids))
-    return {
+
+    # A Scout may label a research result as an announcement because the news
+    # story was discovered before the paper. If evidence acquisition resolves a
+    # true primary research object, give the Editor the stronger stage hint.
+    stage_after = stage
+    if stage == "announcement" and int(final_profile.get("primary_research", 0)) >= 1:
+        stage_after = "paper"
+        candidate["evidence_stage_upgraded_from"] = "announcement"
+        candidate["evidence_stage"] = "paper"
+
+    stats = {
         "title": candidate.get("canonical_title"),
-        "stage": stage,
+        "stage_before": stage,
+        "stage_after": stage_after,
         "original_sources": len(original_ids),
         "final_sources": len(final_ids),
         "targeted_attempted": targeted_attempted,
@@ -301,6 +409,8 @@ def acquire_candidate_evidence(
         "profile_before": {k: v for k, v in profile_before.items() if k != "sources"},
         "profile_after": {k: v for k, v in final_profile.items() if k != "sources"},
     }
+    candidate["evidence_acquisition"] = stats
+    return stats
 
 
 def acquire_evidence_for_candidates(
