@@ -135,48 +135,91 @@ def balanced_select(candidates: list[dict[str, Any]], limit: int) -> list[dict[s
 
 
 def _candidate_packet(db: Database, candidate: dict[str, Any]) -> dict[str, Any]:
-    # Use up to three evidence excerpts for the Editor, but assess every source
-    # linked by the Scout for the deterministic publication gate.
+    """Build a compact Editor packet.
+
+    The deterministic evidence gate still evaluates every linked source. The
+    LLM only needs the strongest few excerpts plus a compact source-role map.
+    This distinction is important on Groq's free TPM tier.
+    """
     all_rows = db.get_sources(candidate.get("source_ids", [])[:10])
-    # Extract full text only for the first four sources to stay within free-tier
-    # token limits; metadata for all linked sources still feeds the gate.
-    enriched_rows = enrich_sources(db, [int(r["id"]) for r in all_rows[:4]])
+
+    # Fetch/extract at most three direct sources. Google News aggregator links
+    # are skipped by enrich.py; primary/official/research pages get preference
+    # through the acquisition stage and evidence-role metadata below.
+    enriched_rows = enrich_sources(db, [int(r["id"]) for r in all_rows[:3]])
     enriched_by_id = {int(r["id"]): r for r in enriched_rows}
 
+    profile = evidence_profile(all_rows, candidate=candidate)
+    assessment_by_id = {
+        int(a["id"]): a for a in profile.get("sources", [])
+        if a.get("role") not in {"irrelevant", "context_only"}
+    }
+
+    # Give the Editor a maximum of five concrete source records. The gate still
+    # sees the full profile/counts, so prompt compression does not weaken the
+    # deterministic publication test.
+    ranked_rows = sorted(
+        all_rows,
+        key=lambda r: (
+            1 if int(r["id"]) in assessment_by_id else 0,
+            float((assessment_by_id.get(int(r["id"])) or {}).get("relevance", 0)),
+        ),
+        reverse=True,
+    )[:5]
+
     sources = []
-    for original in all_rows:
+    for original in ranked_rows:
         r = enriched_by_id.get(int(original["id"]), original)
+        assessment = assessment_by_id.get(int(r["id"]), {})
         evidence = r.get("fetched_text") or r.get("snippet") or ""
         sources.append(
             {
                 "id": int(r["id"]),
-                "title": r["title"],
-                "publisher": r.get("publisher"),
+                "title": clip(r.get("title"), 180),
+                "publisher": clip(r.get("publisher"), 80),
                 "published_at": _date(r.get("published_at")),
-                "url": r["url"],
-                "source_type": r.get("source_type"),
-                # Keep the editor prompt inside free-tier TPM. Sources after
-                # the first three still contribute metadata to verification.
-                "evidence_text": clip(evidence, 500) if int(r["id"]) in enriched_by_id else clip(r.get("snippet"), 180),
+                "url": r.get("url"),
+                "role": assessment.get("role"),
+                "relevance": assessment.get("relevance"),
+                "evidence_text": (
+                    clip(evidence, 340)
+                    if int(r["id"]) in enriched_by_id
+                    else clip(r.get("snippet"), 120)
+                ),
             }
         )
 
-    profile = evidence_profile(all_rows)
+    acq = candidate.get("evidence_acquisition") or {}
+    compact_acq = {
+        "stage_before": acq.get("stage_before"),
+        "stage_after": acq.get("stage_after"),
+        "targeted_attempted": acq.get("targeted_attempted", []),
+        "targeted_added": acq.get("targeted_added", 0),
+    }
+
     return {
-        "canonical_title": candidate.get("canonical_title"),
+        "canonical_title": clip(candidate.get("canonical_title"), 180),
         "category": candidate.get("category"),
-        "what_happened_from_scout": clip(candidate.get("what_happened"), 350),
-        "why_potentially_material": clip(candidate.get("why_potentially_material"), 250),
+        "what_happened_from_scout": clip(candidate.get("what_happened"), 280),
+        "why_potentially_material": clip(candidate.get("why_potentially_material"), 180),
         "scout_materiality": candidate.get("materiality"),
         "scout_novelty": candidate.get("novelty"),
         "evidence_stage": candidate.get("evidence_stage"),
         "evidence_stage_upgraded_from": candidate.get("evidence_stage_upgraded_from"),
-        "evidence_acquisition": candidate.get("evidence_acquisition"),
+        "evidence_acquisition": compact_acq,
         "evidence_profile": {k: v for k, v in profile.items() if k != "sources"},
-        "source_assessments": profile.get("sources", []),
+        "source_assessments": [
+            {
+                "id": int(a["id"]),
+                "role": a.get("role"),
+                "publisher": clip(a.get("publisher"), 70),
+                "relevance": a.get("relevance"),
+            }
+            for a in profile.get("sources", [])
+            if a.get("role") not in {"irrelevant", "context_only"}
+        ][:6],
         "sources": sources,
     }
-
 
 def _known_packet(known: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
@@ -280,31 +323,59 @@ def _benchmark_only_update(candidate: dict[str, Any], decision: dict[str, Any]) 
     return has_benchmark and not has_practical and status in {"paper", "demo", "announcement"}
 
 
-def run_editor(pool: ProviderPool, db: Database, candidates: list[dict[str, Any]]) -> tuple[dict[str, Any], ProviderResult, list[dict[str, Any]]]:
+def run_editor(
+    pool: ProviderPool,
+    db: Database,
+    candidates: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[ProviderResult], list[dict[str, Any]]]:
+    """Run the senior editor one candidate at a time.
+
+    Groq's free GPT-OSS tier is constrained by TPM. A monolithic ten-candidate
+    prompt can exceed that cap in a *single request*, in which case retries can
+    never help. Candidate-level calls keep each request bounded and make the
+    failure domain auditable.
+    """
     packets = [_candidate_packet(db, c) for c in candidates]
 
-    # State matching must scale beyond the newest handful of developments.
-    # Retrieve a bounded 180-day state window, then give each candidate only
-    # its few most plausible prior matches. This keeps the prompt small while
-    # avoiding the old "last 20 developments" blind spot.
     known_all = db.known_developments(days=180, limit=300)
     valid_known_by_idx: dict[int, set[str]] = {}
     for idx, (candidate, packet) in enumerate(zip(candidates, packets)):
-        matches = _known_matches_for_candidate(candidate, known_all, limit=4)
+        matches = _known_matches_for_candidate(candidate, known_all, limit=3)
+        packet["candidate_index"] = idx
         packet["prior_state_matches"] = matches
         valid_known_by_idx[idx] = {str(m["id"]) for m in matches}
 
-    user = "NEW CANDIDATES WITH EVIDENCE AND RELEVANT PRIOR STATE:\n" + json.dumps(
-        packets, ensure_ascii=False, default=str
-    )
     system = read_text(ROOT / "prompts/editor.txt")
-    result = pool.call("editor", system, user)
-    decisions = []
-    for d in result.data.get("decisions", []):
+    results: list[ProviderResult] = []
+    raw_decisions: list[dict[str, Any]] = []
+    model_bottom_lines: list[str] = []
+
+    delay = float(os.getenv("EDITOR_CALL_DELAY_SECONDS", "65"))
+    for pos, packet in enumerate(packets):
+        user = (
+            "EVALUATE EXACTLY THIS ONE CANDIDATE. Preserve candidate_index in your JSON response.\n"
+            + json.dumps(packet, ensure_ascii=False, default=str)
+        )
+        # One attempt per provider for the editor. Repeating an identical
+        # over-size request only creates duplicate 429s; genuine provider
+        # outages should fail closed rather than silently change the brief.
+        result = pool.call("editor", system, user, attempts_per_provider=1)
+        results.append(result)
+        raw_decisions.extend(result.data.get("decisions", []))
+        if result.data.get("bottom_line"):
+            model_bottom_lines.append(str(result.data.get("bottom_line")))
+
+        if pos + 1 < len(packets) and delay > 0:
+            time.sleep(delay)
+
+    decisions: list[dict[str, Any]] = []
+    seen_indices: set[int] = set()
+    for d in raw_decisions:
         try:
             idx = int(d.get("candidate_index"))
-            if idx < 0 or idx >= len(candidates):
+            if idx < 0 or idx >= len(candidates) or idx in seen_indices:
                 continue
+            seen_indices.add(idx)
             d["candidate_index"] = idx
             if d.get("matched_development_id") not in valid_known_by_idx.get(idx, set()):
                 d["matched_development_id"] = None
@@ -321,19 +392,11 @@ def run_editor(pool: ProviderPool, db: Database, candidates: list[dict[str, Any]
             d["state_delta_kind"] = delta_kind
             d["evidence_acquisition"] = candidates[idx].get("evidence_acquisition")
 
-            # The brief explicitly excludes incremental benchmark noise. A raw
-            # leaderboard/benchmark result can remain useful in the database,
-            # but it is not a material frontier delta unless the evidence also
-            # shows a practical capability/deployment change.
             if _benchmark_only_update(candidates[idx], d):
                 d["decision"] = "IGNORE"
                 d["update_materiality"] = min(d["update_materiality"], 4.0)
                 d["state_gate_reason"] = "benchmark_only_without_practical_capability_shift"
 
-            # A matched prior development with no actual state delta is not a
-            # WATCH item. Persisting it as WATCH would refresh/overwrite state
-            # forever and create "story drift". Keep it in candidate_decisions
-            # for audit, but do not let it mutate the development state.
             if d.get("matched_development_id") and delta_kind == "none":
                 d["decision"] = "IGNORE"
                 d["update_materiality"] = 0.0
@@ -342,9 +405,6 @@ def run_editor(pool: ProviderPool, db: Database, candidates: list[dict[str, Any]
                 d["decision"] = "IGNORE"
                 d["state_gate_reason"] = "matched_prior_state_weak_delta"
 
-            # Enforce thresholds + primary/independent-source publication gate
-            # in code, using UPDATE materiality rather than the historical
-            # importance of the underlying story.
             profile = packets[idx].get("evidence_profile", {})
             passed, reason = publication_gate(d, profile)
             d["verification_gate"] = {
@@ -359,9 +419,15 @@ def run_editor(pool: ProviderPool, db: Database, candidates: list[dict[str, Any]
         except Exception:
             log.warning("Discarding malformed editor decision: %r", d)
 
+    # If a provider returned valid JSON but omitted a candidate decision, fail
+    # closed instead of turning an incomplete editorial run into a false quiet
+    # day. The next scheduled run can retry.
+    missing = sorted(set(range(len(candidates))) - {int(d["candidate_index"]) for d in decisions})
+    if missing:
+        raise RuntimeError(f"Editor omitted candidate decisions for indices: {missing}")
+
     downgraded = sum(1 for d in decisions if d.get("gate_downgraded_from_report"))
     report_titles = [d.get("canonical_title") for d in decisions if d.get("decision") == "REPORT"]
-    bottom_line = result.data.get("bottom_line", "")
     if downgraded:
         if report_titles:
             bottom_line = (
@@ -371,8 +437,12 @@ def run_editor(pool: ProviderPool, db: Database, candidates: list[dict[str, Any]
             )
         else:
             bottom_line = f"No candidate passed the deterministic publication-evidence gate; {downgraded} proposed REPORT item(s) remain on WATCH."
-    return {"decisions": decisions, "bottom_line": bottom_line}, result, packets
+    elif report_titles:
+        bottom_line = f"{len(report_titles)} materially new development(s) crossed the publication threshold this cycle."
+    else:
+        bottom_line = "No materially new development crossed the publication threshold this cycle."
 
+    return {"decisions": decisions, "bottom_line": bottom_line}, results, packets
 
 def render_brief(editor: dict[str, Any], candidates: list[dict[str, Any]], db: Database, max_items: int) -> str:
     report_items = [d for d in editor.get("decisions", []) if d.get("decision") == "REPORT"]
