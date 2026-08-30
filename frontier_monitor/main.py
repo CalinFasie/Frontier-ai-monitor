@@ -65,7 +65,19 @@ def main() -> int:
             return 0
 
         pool = ProviderPool(model_cfg)
-        candidates, scout_results = run_scout(pool, topics_cfg.get("topics", {}), by_topic)
+        candidates, scout_results, scout_failures = run_scout(pool, topics_cfg.get("topics", {}), by_topic)
+        active_scout_topics = sum(1 for key in topics_cfg.get("topics", {}) if by_topic.get(key))
+        min_scout_successes = min(
+            active_scout_topics,
+            int(os.getenv("MIN_SCOUT_SUCCESSES", "6")),
+        )
+        stats["scout_topic_successes"] = len(scout_results)
+        stats["scout_topic_failures"] = scout_failures
+        if len(scout_results) < min_scout_successes:
+            raise RuntimeError(
+                f"Scout coverage degraded: only {len(scout_results)}/{active_scout_topics} topic calls succeeded; "
+                f"minimum is {min_scout_successes}. Failures={scout_failures}"
+            )
         candidates = balanced_select(candidates, settings.max_editor_candidates)
         stats["scout_candidates"] = len(candidates)
 
