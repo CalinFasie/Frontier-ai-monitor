@@ -79,6 +79,53 @@ def _targeted_news_query(candidate: dict[str, Any]) -> str:
     return '"' + terms[0] + '" ' + " ".join(terms[1:])
 
 
+_OFFICIAL_DOMAINS = [
+    "ftc.gov", "justice.gov", "cisa.gov", "nist.gov", "sec.gov",
+    "federalregister.gov", "congress.gov", "europa.eu", "eur-lex.europa.eu",
+    "gov.uk", "supremecourt.gov",
+]
+
+_PRIMARY_ENTITY_DOMAINS = {
+    "openai": "openai.com",
+    "anthropic": "anthropic.com",
+    "deepmind": "deepmind.google",
+    "google": "research.google",
+    "meta": "ai.meta.com",
+    "nvidia": "nvidia.com",
+    "microsoft": "microsoft.com",
+    "hugging face": "huggingface.co",
+    "huggingface": "huggingface.co",
+    "spacex": "spacex.com",
+    "xai": "x.ai",
+    "mistral": "mistral.ai",
+}
+
+
+def _site_query(candidate: dict[str, Any], domains: list[str], term_limit: int = 5) -> str:
+    terms = _query_terms(candidate, term_limit)
+    if not terms or not domains:
+        return ""
+    sites = " OR ".join(f"site:{d}" for d in domains)
+    return f"({sites}) " + " ".join(terms)
+
+
+def _targeted_official_query(candidate: dict[str, Any]) -> str:
+    stage = str(candidate.get("evidence_stage") or "").lower()
+    category = str(candidate.get("category") or "").lower()
+    if stage not in {"enacted", "court_ruling", "regulatory_order", "incident_confirmed", "infrastructure_commitment"} and category != "legal_policy":
+        return ""
+    return _site_query(candidate, _OFFICIAL_DOMAINS, 5)
+
+
+def _targeted_primary_entity_query(candidate: dict[str, Any]) -> str:
+    text = (str(candidate.get("canonical_title") or "") + " " + str(candidate.get("what_happened") or "")).lower()
+    domains: list[str] = []
+    for name, domain in _PRIMARY_ENTITY_DOMAINS.items():
+        if name in text and domain not in domains:
+            domains.append(domain)
+    return _site_query(candidate, domains[:2], 5)
+
+
 def _targeted_arxiv_cfg(candidate: dict[str, Any]) -> dict[str, Any] | None:
     terms = _query_terms(candidate, 5)
     if not terms:
@@ -99,7 +146,7 @@ def _need_targeted_search(candidate: dict[str, Any], profile: dict[str, Any]) ->
         return True
     if stage in {"incident_confirmed", "deployed", "independent_confirmation", "demo"}:
         return int(profile.get("independent_reputable_secondary_orgs", 0)) < 2
-    if stage in {"enacted", "court_ruling", "infrastructure_commitment"}:
+    if stage in {"enacted", "court_ruling", "regulatory_order", "infrastructure_commitment"}:
         return int(profile.get("primary_official", 0)) < 1 and int(profile.get("independent_reputable_secondary_orgs", 0)) < 2
     return int(profile.get("source_count", 0)) < 3
 
@@ -138,7 +185,48 @@ def acquire_candidate_evidence(
     targeted_attempted: list[str] = []
     targeted_added = 0
 
-    if _need_targeted_search(candidate, profile_before):
+    def _run_targeted(query: str, label: str, hours: int, max_records: int = 12) -> None:
+        nonlocal targeted_added
+        if not query:
+            return
+        try:
+            targeted_attempted.append(label)
+            items = collect_google_news(
+                candidate.get("category") or "ai_research_automation",
+                query,
+                hours,
+                max_records,
+            )
+            new_rows: list[dict[str, Any]] = []
+            for item in items:
+                sid = db.upsert_source(item)
+                row = dict(item)
+                row["id"] = sid
+                new_rows.append(row)
+            for row in _relevant(candidate, new_rows, limit=5):
+                sid = int(row["id"])
+                if sid not in all_ids:
+                    all_ids.append(sid)
+                    targeted_added += 1
+        except Exception as exc:
+            log.info("Targeted %s evidence search failed for %s: %s", label, candidate.get("canonical_title"), exc)
+
+    # For legal/policy, cyber incidents, and concrete infrastructure claims,
+    # actively try authoritative government/regulatory pages first. Google News
+    # RSS is only the discovery transport; evidence.py classifies the actual
+    # publisher as official when an official result is found.
+    current_profile = evidence_profile(db.get_sources(all_ids))
+    if int(current_profile.get("primary_official", 0)) < 1:
+        _run_targeted(_targeted_official_query(candidate), "official_site_search", max(lookback_hours * 4, 336), 14)
+
+    # For named labs/companies, try their own domain so an announcement can at
+    # least be grounded in the primary claim rather than secondary retellings.
+    current_profile = evidence_profile(db.get_sources(all_ids))
+    if int(current_profile.get("primary_claim", 0)) < 1:
+        _run_targeted(_targeted_primary_entity_query(candidate), "primary_entity_search", max(lookback_hours * 4, 336), 12)
+
+    current_profile = evidence_profile(db.get_sources(all_ids))
+    if _need_targeted_search(candidate, current_profile):
         try:
             query = _targeted_news_query(candidate)
             if query:
