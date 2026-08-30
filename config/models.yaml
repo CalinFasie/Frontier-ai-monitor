@@ -12,7 +12,7 @@ providers:
     roles: [scout, editor]
     scout_model: qwen/qwen3.8-27b
     editor_model: openai/gpt-oss-120b
-    scout_max_tokens: 850
+    scout_max_tokens: 650
     editor_max_tokens: 800
 
   openrouter:
@@ -23,7 +23,7 @@ providers:
     roles: [scout]
     scout_model: openrouter/free
     editor_model: openrouter/free
-    scout_max_tokens: 850
+    scout_max_tokens: 650
     editor_max_tokens: 800
 
   gemini:
@@ -33,5 +33,5 @@ providers:
     roles: [scout, editor]
     scout_model: gemini-3.7-flash
     editor_model: gemini-3.7-flash
-    scout_max_tokens: 850
+    scout_max_tokens: 650
     editor_max_tokens: 800
