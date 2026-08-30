@@ -193,18 +193,83 @@ def _known_packet(known: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+_STATE_STOP = {
+    "about", "after", "again", "against", "among", "being", "could", "from", "have", "into",
+    "more", "than", "that", "their", "this", "those", "through", "under", "using", "with",
+    "without", "would", "will", "model", "models", "artificial", "intelligence", "system", "systems",
+    "report", "reports", "study", "research", "new", "first", "announces", "announcement",
+}
+
+
+def _state_tokens(text: str) -> set[str]:
+    import re
+    return {
+        w.lower()
+        for w in re.findall(r"[A-Za-z0-9][A-Za-z0-9+._/-]{2,}", text or "")
+        if len(w) >= 4 and w.lower() not in _STATE_STOP
+    }
+
+
+def _development_match_score(candidate: dict[str, Any], known: dict[str, Any]) -> float:
+    c_title = str(candidate.get("canonical_title") or "")
+    k_title = str(known.get("canonical_title") or "")
+    seq = title_similarity(c_title, k_title)
+    c_tokens = _state_tokens(c_title + " " + str(candidate.get("what_happened") or ""))
+    k_tokens = _state_tokens(k_title + " " + str(known.get("current_state") or ""))
+    overlap = len(c_tokens & k_tokens) / max(1, min(len(c_tokens), len(k_tokens), 10))
+    category_bonus = 0.10 if candidate.get("category") == known.get("category") else 0.0
+    return min(1.0, (0.58 * seq) + (0.42 * overlap) + category_bonus)
+
+
+def _known_matches_for_candidate(candidate: dict[str, Any], known: list[dict[str, Any]], limit: int = 4) -> list[dict[str, Any]]:
+    ranked = sorted(
+        ((_development_match_score(candidate, d), d) for d in known),
+        key=lambda x: x[0],
+        reverse=True,
+    )
+    selected = []
+    for score, d in ranked:
+        if score < 0.30:
+            continue
+        row = _known_packet([d])[0]
+        row["match_score"] = round(score, 3)
+        selected.append(row)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+_MEANINGFUL_DELTA_KINDS = {
+    "new_development",
+    "status_progression",
+    "evidence_strengthening",
+    "deployment_scale_change",
+    "scope_expansion",
+    "policy_or_legal_action",
+    "infrastructure_commitment",
+    "contradiction_or_retraction",
+}
+
+
 def run_editor(pool: ProviderPool, db: Database, candidates: list[dict[str, Any]]) -> tuple[dict[str, Any], ProviderResult, list[dict[str, Any]]]:
     packets = [_candidate_packet(db, c) for c in candidates]
-    known = _known_packet(db.known_developments(days=90, limit=20))
-    user = (
-        "KNOWN DEVELOPMENTS FROM PRIOR STATE:\n"
-        + json.dumps(known, ensure_ascii=False, default=str)
-        + "\n\nNEW CANDIDATES WITH EVIDENCE:\n"
-        + json.dumps(packets, ensure_ascii=False, default=str)
+
+    # State matching must scale beyond the newest handful of developments.
+    # Retrieve a bounded 180-day state window, then give each candidate only
+    # its few most plausible prior matches. This keeps the prompt small while
+    # avoiding the old "last 20 developments" blind spot.
+    known_all = db.known_developments(days=180, limit=300)
+    valid_known_by_idx: dict[int, set[str]] = {}
+    for idx, (candidate, packet) in enumerate(zip(candidates, packets)):
+        matches = _known_matches_for_candidate(candidate, known_all, limit=4)
+        packet["prior_state_matches"] = matches
+        valid_known_by_idx[idx] = {str(m["id"]) for m in matches}
+
+    user = "NEW CANDIDATES WITH EVIDENCE AND RELEVANT PRIOR STATE:\n" + json.dumps(
+        packets, ensure_ascii=False, default=str
     )
     system = read_text(ROOT / "prompts/editor.txt")
     result = pool.call("editor", system, user)
-    valid_known = {d["id"] for d in known}
     decisions = []
     for d in result.data.get("decisions", []):
         try:
@@ -212,16 +277,35 @@ def run_editor(pool: ProviderPool, db: Database, candidates: list[dict[str, Any]
             if idx < 0 or idx >= len(candidates):
                 continue
             d["candidate_index"] = idx
-            if d.get("matched_development_id") not in valid_known:
+            if d.get("matched_development_id") not in valid_known_by_idx.get(idx, set()):
                 d["matched_development_id"] = None
             d["decision"] = str(d.get("decision", "IGNORE")).upper()
             if d["decision"] not in {"REPORT", "WATCH", "IGNORE"}:
                 d["decision"] = "IGNORE"
             d["materiality"] = float(d.get("materiality", 0))
+            d["update_materiality"] = float(d.get("update_materiality", d.get("materiality", 0)))
             d["evidence_strength"] = float(d.get("evidence_strength", 0))
             d["novelty"] = float(d.get("novelty", 0))
-            # Enforce thresholds + primary/independent-source publication
-            # gate in code, not only in the Editor prompt.
+            delta_kind = str(d.get("state_delta_kind") or "none").lower()
+            if delta_kind not in (_MEANINGFUL_DELTA_KINDS | {"none"}):
+                delta_kind = "none"
+            d["state_delta_kind"] = delta_kind
+
+            # A matched prior development with no actual state delta is not a
+            # WATCH item. Persisting it as WATCH would refresh/overwrite state
+            # forever and create "story drift". Keep it in candidate_decisions
+            # for audit, but do not let it mutate the development state.
+            if d.get("matched_development_id") and delta_kind == "none":
+                d["decision"] = "IGNORE"
+                d["update_materiality"] = 0.0
+                d["state_gate_reason"] = "matched_prior_state_no_material_delta"
+            elif d.get("matched_development_id") and d["decision"] == "WATCH" and d["update_materiality"] < 4:
+                d["decision"] = "IGNORE"
+                d["state_gate_reason"] = "matched_prior_state_weak_delta"
+
+            # Enforce thresholds + primary/independent-source publication gate
+            # in code, using UPDATE materiality rather than the historical
+            # importance of the underlying story.
             profile = packets[idx].get("evidence_profile", {})
             passed, reason = publication_gate(d, profile)
             d["verification_gate"] = {
@@ -230,11 +314,12 @@ def run_editor(pool: ProviderPool, db: Database, candidates: list[dict[str, Any]
                 "profile": profile,
             }
             if d["decision"] == "REPORT" and not passed:
-                d["decision"] = "WATCH" if d["materiality"] >= 5 else "IGNORE"
+                d["decision"] = "WATCH" if d["update_materiality"] >= 5 else "IGNORE"
                 d["gate_downgraded_from_report"] = True
             decisions.append(d)
         except Exception:
             log.warning("Discarding malformed editor decision: %r", d)
+
     downgraded = sum(1 for d in decisions if d.get("gate_downgraded_from_report"))
     report_titles = [d.get("canonical_title") for d in decisions if d.get("decision") == "REPORT"]
     bottom_line = result.data.get("bottom_line", "")
@@ -256,9 +341,9 @@ def render_brief(editor: dict[str, Any], candidates: list[dict[str, Any]], db: D
     report_items = report_items[:max_items]
     date = utcnow().date().isoformat()
     if not report_items:
-        return f"# Frontier AI Brief — {date}\n\nNo material frontier developments since the previous review.\n\n## Bottom line\n\n{editor.get('bottom_line') or 'No evidence crossed the publication threshold.'}\n"
+        return f"# Frontier AI Brief â€” {date}\n\nNo material frontier developments since the previous review.\n\n## Bottom line\n\n{editor.get('bottom_line') or 'No evidence crossed the publication threshold.'}\n"
 
-    parts = [f"# Frontier AI Brief — {date}"]
+    parts = [f"# Frontier AI Brief â€” {date}"]
     for n, d in enumerate(report_items, 1):
         candidate = candidates[int(d["candidate_index"])]
         source_rows = db.get_sources(candidate.get("source_ids", []))
@@ -268,7 +353,7 @@ def render_brief(editor: dict[str, Any], candidates: list[dict[str, Any]], db: D
                 f"\n**Area:** {d.get('category', candidate.get('category'))}",
                 f"\n**What changed:**  \n{d.get('what_changed', '')}",
                 f"\n**Why it matters:**  \n{d.get('why_it_matters', '')}",
-                f"\n**Evidence:** materiality {d.get('materiality', 0):g}/10; evidence {d.get('evidence_strength', 0):g}/10; status `{d.get('status', 'unknown')}`",
+                f"\n**Evidence:** underlying materiality {d.get('materiality', 0):g}/10; update materiality {d.get('update_materiality', d.get('materiality', 0)):g}/10; evidence {d.get('evidence_strength', 0):g}/10; status `{d.get('status', 'unknown')}`",
                 f"\n**Verification:** `{(d.get('verification_gate') or {}).get('reason', 'not_recorded')}`",
                 (
                     "\n**Evidence note:** Primary research result; this brief is reporting what the paper demonstrates/reports, "
@@ -285,7 +370,7 @@ def render_brief(editor: dict[str, Any], candidates: list[dict[str, Any]], db: D
                 continue
             seen_urls.add(s["url"])
             label = s.get("publisher") or s.get("title") or "Source"
-            parts.append(f"- [{label}]({s['url']}) — {clip(s.get('title'), 150)}")
+            parts.append(f"- [{label}]({s['url']}) â€” {clip(s.get('title'), 150)}")
     parts.extend(["\n## Bottom line", "", editor.get("bottom_line") or "The items above crossed the materiality threshold."])
     return "\n".join(parts).strip() + "\n"
 
