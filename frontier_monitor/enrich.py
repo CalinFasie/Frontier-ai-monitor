@@ -8,6 +8,11 @@ import requests
 from .utils import clip
 
 log = logging.getLogger(__name__)
+# Trafilatura can emit many "discarding data: None" warnings for pages that
+# contain no extractable article body. They are expected in a broad news crawl
+# and obscure the monitor's real health signals.
+logging.getLogger("trafilatura.core").setLevel(logging.ERROR)
+
 UA = "Mozilla/5.0 (compatible; frontier-ai-monitor/0.1; personal research)"
 
 
@@ -45,8 +50,14 @@ def enrich_sources(db: Any, source_ids: list[int]) -> list[dict[str, Any]]:
     for row in rows:
         if row.get("fetched_text"):
             continue
-        if row.get("source_type") == "arxiv" and row.get("snippet"):
-            # arXiv abstract is already good evidence for scouting/editorial triage.
+        source_type = str(row.get("source_type") or "").lower()
+        # Google News RSS URLs point to the aggregator, not reliably to the
+        # publisher article. Fetching them produces noisy/non-article HTML and
+        # trafilatura warnings. The RSS title/summary remains valid discovery
+        # metadata; direct RSS/official/research sources are enriched below.
+        if source_type == "google_news":
+            continue
+        if source_type in {"arxiv", "crossref_research", "crossref_index"} and row.get("snippet"):
             continue
         text = fetch_public_text(row["url"])
         if text:
