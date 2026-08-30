@@ -102,12 +102,21 @@ def main() -> int:
         db.save_brief(run_id, brief)
         out_dir = ROOT / "briefs"
         out_dir.mkdir(exist_ok=True)
-        out_path = out_dir / f"{utcnow().date().isoformat()}.md"
-        out_path.write_text(brief, encoding="utf-8")
+        now = utcnow()
+        day = now.date().isoformat()
+        archive_dir = out_dir / day
+        archive_dir.mkdir(exist_ok=True)
+        archive_path = archive_dir / f"{now.strftime('%H%M%S')}_{run_id[-8:]}.md"
+        daily_path = out_dir / f"{day}.md"
+        latest_path = out_dir / "latest.md"
+        for path in (archive_path, daily_path, latest_path):
+            path.write_text(brief, encoding="utf-8")
 
-        sent = send_if_configured(f"Frontier AI Brief — {utcnow().date().isoformat()}", brief)
+        sent = send_if_configured(f"Frontier AI Brief â€” {day}", brief)
         stats["email_sent"] = sent
-        stats["brief_path"] = str(out_path.relative_to(ROOT))
+        stats["brief_path"] = str(archive_path.relative_to(ROOT))
+        stats["brief_daily_path"] = str(daily_path.relative_to(ROOT))
+        stats["brief_latest_path"] = str(latest_path.relative_to(ROOT))
 
         scout_provider = scout_results[0].provider if scout_results else None
         scout_model = scout_results[0].actual_model if scout_results else None
