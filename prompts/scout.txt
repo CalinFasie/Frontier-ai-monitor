@@ -20,7 +20,7 @@ Return JSON only with this shape:
       "materiality": 0,
       "novelty": 0,
       "confidence": "high|medium|low",
-      "evidence_stage": "rumor|announcement|paper|demo|independent_confirmation|deployed|enacted|court_ruling"
+      "evidence_stage": "rumor|announcement|paper|demo|independent_confirmation|deployed|incident_confirmed|enacted|court_ruling"
     }
   ]
 }
