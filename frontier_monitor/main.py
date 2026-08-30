@@ -112,7 +112,7 @@ def main() -> int:
         for path in (archive_path, daily_path, latest_path):
             path.write_text(brief, encoding="utf-8")
 
-        sent = send_if_configured(f"Frontier AI Brief â€” {day}", brief)
+        sent = send_if_configured(f"Frontier AI Brief - {day}", brief)
         stats["email_sent"] = sent
         stats["brief_path"] = str(archive_path.relative_to(ROOT))
         stats["brief_daily_path"] = str(daily_path.relative_to(ROOT))
