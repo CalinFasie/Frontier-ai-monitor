@@ -10,7 +10,7 @@ from typing import Any
 import requests
 
 from .collectors import UA, collect_arxiv, collect_google_news
-from .evidence import evidence_profile
+from .evidence import candidate_looks_research, evidence_profile
 from .utils import compact_ws, fingerprint, title_similarity, utcnow
 
 log = logging.getLogger(__name__)
@@ -199,7 +199,12 @@ def collect_crossref_candidate(candidate: dict[str, Any], max_results: int = 6) 
         candidate_tokens = set(_tokens(title))
         work_tokens = set(_tokens(work_title))
         overlap = len(candidate_tokens & work_tokens) / max(1, min(len(candidate_tokens), 8))
-        if sim < 0.43 and overlap < 0.45:
+        distinctive = {t for t in candidate_tokens if any(ch.isdigit() for ch in t) or len(t) >= 9}
+        distinctive_hit = bool(distinctive & work_tokens)
+        # Crossref is a broad scholarly index. Require a materially stronger
+        # title/token match than general news retrieval so unrelated papers do
+        # not inflate a candidate's evidence profile.
+        if sim < 0.58 and not (overlap >= 0.60 and distinctive_hit):
             continue
         abstract = _strip_markup(item.get("abstract"))
         url = f"https://doi.org/{doi}"
@@ -257,7 +262,7 @@ def acquire_candidate_evidence(
         if sid not in all_ids:
             all_ids.append(sid)
 
-    profile_before = evidence_profile(db.get_sources(all_ids))
+    profile_before = evidence_profile(db.get_sources(all_ids), candidate=candidate)
     targeted_attempted: list[str] = []
     targeted_added = 0
 
@@ -291,17 +296,17 @@ def acquire_candidate_evidence(
     # actively try authoritative government/regulatory pages first. Google News
     # RSS is only the discovery transport; evidence.py classifies the actual
     # publisher as official when an official result is found.
-    current_profile = evidence_profile(db.get_sources(all_ids))
+    current_profile = evidence_profile(db.get_sources(all_ids), candidate=candidate)
     if int(current_profile.get("primary_official", 0)) < 1:
         _run_targeted(_targeted_official_query(candidate), "official_site_search", max(lookback_hours * 4, 336), 14)
 
     # For named labs/companies, try their own domain so an announcement can at
     # least be grounded in the primary claim rather than secondary retellings.
-    current_profile = evidence_profile(db.get_sources(all_ids))
+    current_profile = evidence_profile(db.get_sources(all_ids), candidate=candidate)
     if int(current_profile.get("primary_claim", 0)) < 1:
         _run_targeted(_targeted_primary_entity_query(candidate), "primary_entity_search", max(lookback_hours * 4, 336), 12)
 
-    current_profile = evidence_profile(db.get_sources(all_ids))
+    current_profile = evidence_profile(db.get_sources(all_ids), candidate=candidate)
     if _need_targeted_search(candidate, current_profile):
         try:
             query = _targeted_news_query(candidate)
@@ -331,7 +336,7 @@ def acquire_candidate_evidence(
 
     # Papers deserve a direct attempt to locate the primary research object.
     stage = str(candidate.get("evidence_stage") or "").lower()
-    profile_mid = evidence_profile(db.get_sources(all_ids))
+    profile_mid = evidence_profile(db.get_sources(all_ids), candidate=candidate)
     if stage == "paper" and int(profile_mid.get("primary_research", 0)) < 1:
         arxiv_cfg = _targeted_arxiv_cfg(candidate)
         if arxiv_cfg:
@@ -358,8 +363,8 @@ def acquire_candidate_evidence(
 
     # If arXiv did not resolve the scholarly object, try a DOI/title index. This
     # catches conference/journal papers and canonical-title paraphrases.
-    profile_after_arxiv = evidence_profile(db.get_sources(all_ids))
-    if stage in {"paper", "announcement"} and int(profile_after_arxiv.get("primary_research", 0)) < 1:
+    profile_after_arxiv = evidence_profile(db.get_sources(all_ids), candidate=candidate)
+    if (stage == "paper" or (stage == "announcement" and candidate_looks_research(candidate))) and int(profile_after_arxiv.get("primary_research", 0)) < 1:
         try:
             targeted_attempted.append("crossref")
             items = collect_crossref_candidate(candidate, 6)
@@ -387,7 +392,7 @@ def acquire_candidate_evidence(
     final_ids = list(dict.fromkeys(final_ids))[:10]
     candidate["source_ids"] = final_ids
 
-    final_profile = evidence_profile(db.get_sources(final_ids))
+    final_profile = evidence_profile(db.get_sources(final_ids), candidate=candidate)
 
     # A Scout may label a research result as an announcement because the news
     # story was discovered before the paper. If evidence acquisition resolves a
