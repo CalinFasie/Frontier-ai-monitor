@@ -137,15 +137,18 @@ def publication_gate(decision: dict[str, Any], profile: dict[str, Any]) -> tuple
             return True, "official_legal_source_or_two_independent_secondaries"
         return False, "legal_claim_lacks_official_or_two_independent_secondaries"
 
-    # A research paper is primary evidence of its own experiment, not an
-    # independent replication. Require at least one independent reputable
-    # source, or two distinct primary research organizations.
+    # A paper is primary evidence of the experiment/result it reports. It is
+    # NOT evidence of independent replication. High-materiality research may
+    # therefore be reportable before press coverage or replication exists, but
+    # the brief must label it explicitly as a primary-research result.
     if status == "paper":
         if research >= 1 and secondary >= 1:
             return True, "primary_research_plus_independent_secondary"
         if research >= 2 and int(profile.get("independent_primary_orgs", 0)) >= 2:
             return True, "two_independent_primary_research_sources"
-        return False, "paper_lacks_independent_support"
+        if research >= 1 and materiality >= 8 and evidence_strength >= 7:
+            return True, "primary_research_material_claim_not_replication"
+        return False, "paper_missing_primary_research_or_materiality"
 
     # Demos are especially hype-prone. Only exceptional, strongly evidenced
     # demos pass, and they still need independent corroboration.
@@ -153,6 +156,15 @@ def publication_gate(decision: dict[str, Any], profile: dict[str, Any]) -> tuple
         if evidence_strength >= 8 and ((primary_any >= 1 and secondary >= 1) or secondary >= 2):
             return True, "high_strength_demo_with_independent_corroboration"
         return False, "demo_lacks_high_strength_independent_corroboration"
+
+    if status == "infrastructure_commitment":
+        if official >= 1:
+            return True, "official_infrastructure_commitment"
+        if claim >= 1 and secondary >= 1:
+            return True, "primary_claim_plus_independent_secondary"
+        if secondary >= 2:
+            return True, "two_independent_reputable_secondaries"
+        return False, "infrastructure_commitment_lacks_documented_support"
 
     if status in {"independent_confirmation", "deployed", "incident_confirmed"}:
         if primary_any >= 1 and secondary >= 1:
