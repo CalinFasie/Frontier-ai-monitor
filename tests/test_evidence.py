@@ -87,3 +87,22 @@ def test_official_infrastructure_commitment_can_pass():
     passed, reason = publication_gate(decision, profile)
     assert passed is True
     assert reason == "official_infrastructure_commitment"
+
+
+def test_update_materiality_controls_publication_gate():
+    profile = evidence_profile([row(1, "European Commission")])
+    ok, reason = publication_gate(
+        {"materiality": 9, "update_materiality": 2, "evidence_strength": 9, "status": "enacted"},
+        profile,
+    )
+    assert not ok
+    assert reason == "update_materiality_below_7"
+
+
+def test_official_regulatory_order_can_report():
+    profile = evidence_profile([row(1, "Federal Trade Commission")])
+    ok, _ = publication_gate(
+        {"materiality": 8, "update_materiality": 8, "evidence_strength": 8, "status": "regulatory_order"},
+        profile,
+    )
+    assert ok
