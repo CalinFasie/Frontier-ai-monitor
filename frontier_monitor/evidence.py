@@ -51,8 +51,10 @@ def classify_source(row: dict[str, Any], cfg: dict[str, Any] | None = None) -> d
     publisher = str(row.get("publisher") or "")
     host = _host(row.get("url"))
 
-    if source_type == "arxiv":
+    if source_type in {"arxiv", "crossref_research"}:
         role = "primary_research"
+    elif source_type == "crossref_index":
+        role = "primary_research_index"
     elif source_type in {"rss_official", "official"}:
         role = "primary_official"
     elif source_type in {"rss_primary_claim", "primary_claim"}:
@@ -95,6 +97,7 @@ def evidence_profile(rows: list[dict[str, Any]], cfg: dict[str, Any] | None = No
         "source_count": len(assessed),
         "primary_official": counts["primary_official"],
         "primary_research": counts["primary_research"],
+        "primary_research_index": counts["primary_research_index"],
         "primary_claim": counts["primary_claim"],
         "reputable_secondary": counts["secondary_reputable"],
         "other_secondary": counts["secondary_other"],
@@ -121,6 +124,7 @@ def publication_gate(decision: dict[str, Any], profile: dict[str, Any]) -> tuple
 
     official = int(profile.get("primary_official", 0))
     research = int(profile.get("primary_research", 0))
+    research_index = int(profile.get("primary_research_index", 0))
     claim = int(profile.get("primary_claim", 0))
     secondary = int(profile.get("independent_reputable_secondary_orgs", 0))
     primary_any = official + research + claim
@@ -148,6 +152,11 @@ def publication_gate(decision: dict[str, Any], profile: dict[str, Any]) -> tuple
             return True, "two_independent_primary_research_sources"
         if research >= 1 and materiality >= 8 and evidence_strength >= 7:
             return True, "primary_research_material_claim_not_replication"
+        # A DOI/index record proves that the scholarly object exists, but not its
+        # substantive claims. It is publishable only when paired with an
+        # independent reputable source describing the result.
+        if research_index >= 1 and secondary >= 1 and materiality >= 8 and evidence_strength >= 7:
+            return True, "research_index_plus_independent_secondary"
         return False, "paper_missing_primary_research_or_materiality"
 
     # Demos are especially hype-prone. Only exceptional, strongly evidenced
