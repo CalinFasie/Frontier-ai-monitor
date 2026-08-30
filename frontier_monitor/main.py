@@ -82,16 +82,31 @@ def main() -> int:
         ]
 
         if candidates:
-            editor, editor_result, packets = run_editor(pool, db, candidates)
+            editor, editor_results, packets = run_editor(pool, db, candidates)
+            editor_result = editor_results[-1] if editor_results else None
         else:
             # No candidate survived high-recall scouting. This is a legitimate quiet result
             # as long as discovery itself passed health checks.
             editor = {"decisions": [], "bottom_line": "No candidate from the monitored sources crossed the materiality threshold."}
+            editor_results = []
             editor_result = None
 
         counts = persist_editor_results(db, run_id, editor, candidates)
         stats["editor_decisions"] = counts
-        if editor_result:
+        if editor_results:
+            stats["editor_calls"] = [
+                {
+                    "provider": r.provider,
+                    "requested_model": r.requested_model,
+                    "actual_model": r.actual_model,
+                    "prompt_tokens": r.prompt_tokens,
+                    "completion_tokens": r.completion_tokens,
+                    "total_tokens": r.total_tokens,
+                    "request_chars": r.request_chars,
+                }
+                for r in editor_results
+            ]
+            # Backward-compatible summary of the final editor call.
             stats["editor_call"] = {
                 "provider": editor_result.provider,
                 "requested_model": editor_result.requested_model,
