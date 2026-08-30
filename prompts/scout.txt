@@ -4,7 +4,7 @@ You receive fresh source records for ONE topic. Your job is high-recall discover
 
 Select only candidate developments that could plausibly change a sophisticated observer's view of AI capabilities, AI R&D automation, scientific feasibility, deployment economics, safety/control, cyber offense/defense, compute/energy constraints, law/regulation, or strategic competition.
 
-Ignore routine product updates, minor model launches, ordinary funding, shallow partnerships, speculative commentary, and incremental benchmark noise.
+Ignore routine product updates, minor model launches, ordinary funding, shallow partnerships, speculative commentary, and incremental benchmark noise. A benchmark/leaderboard score without evidence of changed real-world capability should not become a candidate.
 
 Also normally ignore:
 - opinion pieces;
