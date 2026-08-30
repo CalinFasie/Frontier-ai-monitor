@@ -37,16 +37,13 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-
           ENABLE_GEMINI_FALLBACK: ${{ vars.ENABLE_GEMINI_FALLBACK || '0' }}
-
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ vars.SMTP_PORT || '587' }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
-
           TZ: Europe/Bucharest
           LOOKBACK_HOURS: "72"
           MAX_EDITOR_CANDIDATES: "10"
@@ -54,13 +51,12 @@ jobs:
           MIN_DISCOVERY_SUCCESSES: "3"
           MIN_DISCOVERED_SOURCES: "25"
           SCOUT_CALL_DELAY_SECONDS: "8"
-
         run: python -m frontier_monitor.main
 
       - name: Commit generated brief
         run: |
           git add briefs/
-          
+
           if git diff --cached --quiet; then
             echo "No brief file changes to commit."
             exit 0
@@ -68,6 +64,5 @@ jobs:
 
           git config user.name "frontier-ai-monitor[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           git commit -m "brief: $(date -u +%F)"
           git push
