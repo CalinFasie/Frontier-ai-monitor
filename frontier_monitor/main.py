@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from .config import ROOT, Settings, load_yaml
 from .db import Database
 from .emailer import send_if_configured
+from .evidence_acquisition import acquire_evidence_for_candidates
 from .pipeline import (
     balanced_select,
     collect_and_store,
@@ -67,6 +68,14 @@ def main() -> int:
         candidates, scout_results = run_scout(pool, topics_cfg.get("topics", {}), by_topic)
         candidates = balanced_select(candidates, settings.max_editor_candidates)
         stats["scout_candidates"] = len(candidates)
+
+        # Before the Editor decides, expand each candidate's evidence from the
+        # already-collected corpus and, only when needed, targeted free RSS/arXiv
+        # retrieval. This improves corroboration without a paid web-search API.
+        evidence_acquisition = acquire_evidence_for_candidates(
+            db, candidates, topics_cfg.get("topics", {}), settings.lookback_hours
+        ) if candidates else []
+        stats["evidence_acquisition"] = evidence_acquisition
         stats["scout_calls"] = [
             {"provider": r.provider, "requested_model": r.requested_model, "actual_model": r.actual_model}
             for r in scout_results
