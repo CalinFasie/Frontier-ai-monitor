@@ -46,6 +46,49 @@ def _rate_limit_is_request_too_large(text: str) -> bool:
     return False
 
 
+def _retry_after_from_text(text: str) -> float | None:
+    """Parse provider messages such as `Please try again in 7.29s` or `435ms`."""
+    lower = text.lower()
+    m = re.search(r"try again in\s+([0-9.]+)\s*(ms|s|sec|secs|seconds?)", lower)
+    if not m:
+        return None
+    try:
+        value = float(m.group(1))
+        unit = m.group(2)
+        return value / 1000.0 if unit == "ms" else value
+    except Exception:
+        return None
+
+
+def _message_text(message: dict[str, Any]) -> str:
+    """Extract usable text from heterogeneous OpenAI-compatible responses.
+
+    Some free OpenRouter models emit `content=null` while putting text in a
+    reasoning field, or return content as a list of text parts. Treat a truly
+    empty message as a provider failure instead of crashing on `.strip()`.
+    """
+    content = message.get("content")
+    if isinstance(content, str) and content.strip():
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
+                value = part.get("text") or part.get("content")
+                if isinstance(value, str):
+                    parts.append(value)
+        joined = "\n".join(x for x in parts if x.strip())
+        if joined.strip():
+            return joined
+    for key in ("reasoning_content", "reasoning"):
+        value = message.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    raise ProviderError("Provider returned an empty assistant message (content=null)", retryable=True)
+
+
 class OpenAICompatibleProvider:
     def __init__(self, name: str, base_url: str, api_key: str, headers: dict[str, str] | None = None):
         self.name = name
@@ -96,6 +139,11 @@ class OpenAICompatibleProvider:
                     retry_after = float(r.headers.get("Retry-After", "") or 0) or None
                 except Exception:
                     retry_after = None
+                retry_after = retry_after or _retry_after_from_text(text)
+                if retry_after is not None and not too_large:
+                    # Provider clocks/buckets are not perfectly aligned with our
+                    # runner, so wait a little beyond the advertised reset.
+                    retry_after += 1.5
                 raise ProviderError(
                     f"{self.name} HTTP 429: {text}",
                     retryable=not too_large,
@@ -107,13 +155,24 @@ class OpenAICompatibleProvider:
 
         body = r.json()
         try:
-            text = body["choices"][0]["message"]["content"]
+            message = body["choices"][0]["message"]
+            text = _message_text(message)
+        except ProviderError:
+            raise
         except Exception as exc:
             raise ProviderError(f"Unexpected {self.name} response: {str(body)[:1500]}", retryable=False) from exc
 
+        try:
+            parsed = extract_json(text)
+        except Exception as exc:
+            raise ProviderError(
+                f"{self.name} returned non-JSON/empty model output: {text[:800]!r}",
+                retryable=True,
+            ) from exc
+
         usage = body.get("usage") or {}
         return ProviderResult(
-            data=extract_json(text),
+            data=parsed,
             provider=self.name,
             requested_model=model,
             actual_model=body.get("model") or model,
