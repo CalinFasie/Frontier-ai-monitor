@@ -1,0 +1,124 @@
+# Conservative publication-evidence policy.
+# Matching is case-insensitive and checks publisher name and, when available,
+# the final/direct URL host. Google News links often hide the publisher domain,
+# so publisher-name matching matters.
+
+official_publishers:
+  - european commission
+  - european union
+  - eur-lex
+  - white house
+  - federal trade commission
+  - department of justice
+  - u.s. department of justice
+  - cisa
+  - nist
+  - securities and exchange commission
+  - u.s. securities and exchange commission
+  - food and drug administration
+  - fda
+  - european medicines agency
+  - ema
+  - gov.uk
+  - uk government
+  - competition and markets authority
+  - federal register
+  - congress.gov
+  - court of justice of the european union
+  - supreme court
+
+official_domains:
+  - europa.eu
+  - eur-lex.europa.eu
+  - ec.europa.eu
+  - whitehouse.gov
+  - ftc.gov
+  - justice.gov
+  - cisa.gov
+  - nist.gov
+  - sec.gov
+  - fda.gov
+  - ema.europa.eu
+  - gov.uk
+  - congress.gov
+  - federalregister.gov
+  - supremecourt.gov
+
+# These are primary for what the organization itself claims/demonstrates,
+# but are NOT independent confirmation of their own claims.
+primary_claim_publishers:
+  - openai
+  - anthropic
+  - google deepmind
+  - deepmind
+  - google research
+  - meta ai
+  - microsoft research
+  - nvidia
+  - xai
+  - mistral ai
+  - hugging face
+
+primary_claim_domains:
+  - openai.com
+  - anthropic.com
+  - deepmind.google
+  - research.google
+  - ai.meta.com
+  - microsoft.com
+  - microsoft.com/en-us/research
+  - nvidia.com
+  - x.ai
+  - mistral.ai
+  - huggingface.co
+
+# A conservative allow-list. Unknown outlets can still be shown to the Editor,
+# but do not satisfy the deterministic publication gate by themselves.
+reputable_secondary_publishers:
+  - reuters
+  - associated press
+  - ap news
+  - bloomberg
+  - financial times
+  - wall street journal
+  - new york times
+  - washington post
+  - bbc
+  - the guardian
+  - wired
+  - mit technology review
+  - ars technica
+  - techcrunch
+  - the information
+  - semafor
+  - nature
+  - science
+  - stat
+  - bleepingcomputer
+  - the record
+  - krebs on security
+  - krebsonsecurity
+
+reputable_secondary_domains:
+  - reuters.com
+  - apnews.com
+  - bloomberg.com
+  - ft.com
+  - wsj.com
+  - nytimes.com
+  - washingtonpost.com
+  - bbc.com
+  - bbc.co.uk
+  - theguardian.com
+  - wired.com
+  - technologyreview.com
+  - arstechnica.com
+  - techcrunch.com
+  - theinformation.com
+  - semafor.com
+  - nature.com
+  - science.org
+  - statnews.com
+  - bleepingcomputer.com
+  - therecord.media
+  - krebsonsecurity.com
