@@ -220,7 +220,10 @@ def collect_rss(feed_cfg: dict[str, Any]) -> list[dict[str, Any]]:
                 "publisher": feed_cfg.get("name"),
                 "published_at": published_at,
                 "category_hint": feed_cfg.get("default_topic", "ai_research_automation"),
-                "source_type": "rss",
+                "source_type": {
+                    "official": "rss_official",
+                    "primary_claim": "rss_primary_claim",
+                }.get(str(feed_cfg.get("evidence_role") or "").lower(), "rss"),
                 "snippet": clip(e.get("summary") or e.get("description") or "", 1600),
             }
         )
