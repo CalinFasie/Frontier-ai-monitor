@@ -13,6 +13,7 @@ from .collectors import collect_all
 from .config import ROOT, Settings, load_yaml
 from .db import Database
 from .enrich import enrich_sources
+from .evidence import evidence_profile, publication_gate
 from .providers import ProviderPool, ProviderResult
 from .utils import clip, read_text, title_similarity, utcnow
 
@@ -134,9 +135,15 @@ def balanced_select(candidates: list[dict[str, Any]], limit: int) -> list[dict[s
 
 
 def _candidate_packet(db: Database, candidate: dict[str, Any]) -> dict[str, Any]:
-    rows = enrich_sources(db, candidate.get("source_ids", [])[:2])
+    # Use up to three evidence excerpts for the Editor, but assess every source
+    # linked by the Scout for the deterministic publication gate.
+    all_rows = db.get_sources(candidate.get("source_ids", [])[:5])
+    enriched_rows = enrich_sources(db, [int(r["id"]) for r in all_rows[:3]])
+    enriched_by_id = {int(r["id"]): r for r in enriched_rows}
+
     sources = []
-    for r in rows:
+    for original in all_rows:
+        r = enriched_by_id.get(int(original["id"]), original)
         evidence = r.get("fetched_text") or r.get("snippet") or ""
         sources.append(
             {
@@ -145,9 +152,14 @@ def _candidate_packet(db: Database, candidate: dict[str, Any]) -> dict[str, Any]
                 "publisher": r.get("publisher"),
                 "published_at": _date(r.get("published_at")),
                 "url": r["url"],
-                "evidence_text": clip(evidence, 600),
+                "source_type": r.get("source_type"),
+                # Keep the editor prompt inside free-tier TPM. Sources after
+                # the first three still contribute metadata to verification.
+                "evidence_text": clip(evidence, 500) if int(r["id"]) in enriched_by_id else clip(r.get("snippet"), 220),
             }
         )
+
+    profile = evidence_profile(all_rows)
     return {
         "canonical_title": candidate.get("canonical_title"),
         "category": candidate.get("category"),
@@ -156,6 +168,8 @@ def _candidate_packet(db: Database, candidate: dict[str, Any]) -> dict[str, Any]
         "scout_materiality": candidate.get("materiality"),
         "scout_novelty": candidate.get("novelty"),
         "evidence_stage": candidate.get("evidence_stage"),
+        "evidence_profile": {k: v for k, v in profile.items() if k != "sources"},
+        "source_assessments": profile.get("sources", []),
         "sources": sources,
     }
 
@@ -204,13 +218,34 @@ def run_editor(pool: ProviderPool, db: Database, candidates: list[dict[str, Any]
             d["materiality"] = float(d.get("materiality", 0))
             d["evidence_strength"] = float(d.get("evidence_strength", 0))
             d["novelty"] = float(d.get("novelty", 0))
-            # Enforce threshold in code, not only in prompt.
-            if d["decision"] == "REPORT" and d["materiality"] < 7:
+            # Enforce thresholds + primary/independent-source publication
+            # gate in code, not only in the Editor prompt.
+            profile = packets[idx].get("evidence_profile", {})
+            passed, reason = publication_gate(d, profile)
+            d["verification_gate"] = {
+                "passed": passed,
+                "reason": reason,
+                "profile": profile,
+            }
+            if d["decision"] == "REPORT" and not passed:
                 d["decision"] = "WATCH" if d["materiality"] >= 5 else "IGNORE"
+                d["gate_downgraded_from_report"] = True
             decisions.append(d)
         except Exception:
             log.warning("Discarding malformed editor decision: %r", d)
-    return {"decisions": decisions, "bottom_line": result.data.get("bottom_line", "")}, result, packets
+    downgraded = sum(1 for d in decisions if d.get("gate_downgraded_from_report"))
+    report_titles = [d.get("canonical_title") for d in decisions if d.get("decision") == "REPORT"]
+    bottom_line = result.data.get("bottom_line", "")
+    if downgraded:
+        if report_titles:
+            bottom_line = (
+                f"The deterministic verification gate retained {len(report_titles)} development(s) for reporting: "
+                + "; ".join(str(x) for x in report_titles[:4])
+                + f". {downgraded} proposed REPORT item(s) were moved to WATCH pending stronger evidence."
+            )
+        else:
+            bottom_line = f"No candidate passed the deterministic publication-evidence gate; {downgraded} proposed REPORT item(s) remain on WATCH."
+    return {"decisions": decisions, "bottom_line": bottom_line}, result, packets
 
 
 def render_brief(editor: dict[str, Any], candidates: list[dict[str, Any]], db: Database, max_items: int) -> str:
@@ -232,6 +267,7 @@ def render_brief(editor: dict[str, Any], candidates: list[dict[str, Any]], db: D
                 f"\n**What changed:**  \n{d.get('what_changed', '')}",
                 f"\n**Why it matters:**  \n{d.get('why_it_matters', '')}",
                 f"\n**Evidence:** materiality {d.get('materiality', 0):g}/10; evidence {d.get('evidence_strength', 0):g}/10; status `{d.get('status', 'unknown')}`",
+                f"\n**Verification:** `{(d.get('verification_gate') or {}).get('reason', 'not_recorded')}`",
                 "\n**Sources:**",
             ]
         )
