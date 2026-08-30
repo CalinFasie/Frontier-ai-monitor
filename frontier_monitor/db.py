@@ -186,6 +186,15 @@ class Database:
         by_id = {int(r["id"]): dict(r) for r in rows}
         return [by_id[i] for i in ids if i in by_id]
 
+    def recent_sources(self, days: int = 14, category: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+        cutoff = utcnow() - timedelta(days=days)
+        stmt = select(sources).where(sources.c.last_seen_at >= cutoff)
+        if category:
+            stmt = stmt.where(sources.c.category_hint == category)
+        stmt = stmt.order_by(sources.c.last_seen_at.desc()).limit(limit)
+        with self.engine.begin() as cx:
+            return [dict(r) for r in cx.execute(stmt).mappings().all()]
+
     def known_developments(self, days: int = 90, limit: int = 50) -> list[dict[str, Any]]:
         cutoff = utcnow() - timedelta(days=days)
         stmt = (
