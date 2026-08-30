@@ -225,31 +225,75 @@ class Database:
         now = utcnow()
         requested = decision.get("matched_development_id")
         dev_id = requested or development_id(decision["canonical_title"])
+        delta_kind = str(decision.get("state_delta_kind") or "new_development").lower()
+        meaningful_delta = delta_kind not in {"none", ""}
+        contradiction = delta_kind == "contradiction_or_retraction"
+
         with self.engine.begin() as cx:
             existing = cx.execute(select(developments).where(developments.c.id == dev_id)).mappings().first()
             report = decision.get("decision") == "REPORT"
             watch = decision.get("decision") == "WATCH"
-            values = dict(
-                canonical_title=decision["canonical_title"],
-                category=decision["category"],
-                last_seen_at=now,
-                status=decision.get("status"),
-                previous_state=(existing or {}).get("current_state") if existing else None,
-                current_state=decision.get("what_changed") or decision.get("state_delta"),
-                materiality=float(decision.get("materiality", 0)),
-                evidence_strength=float(decision.get("evidence_strength", 0)),
-                novelty=float(decision.get("novelty", 0)),
-                confidence=decision.get("confidence"),
-                watch=watch,
-                latest_run_id=run_id,
-            )
+
             if existing:
+                # Always record that we saw the development again, but do not
+                # allow a weak reiteration to overwrite a stronger historical
+                # state. Only a meaningful delta mutates current_state/status.
+                # A claimed evidence-strengthening delta is self-inconsistent
+                # when its evidence score is not actually stronger.
+                if delta_kind == "evidence_strengthening" and float(decision.get("evidence_strength", 0)) <= float(existing.get("evidence_strength") or 0):
+                    meaningful_delta = False
+                values: dict[str, Any] = {
+                    "last_seen_at": now,
+                    "latest_run_id": run_id,
+                }
+                if meaningful_delta:
+                    values.update(
+                        canonical_title=decision["canonical_title"],
+                        category=decision["category"],
+                        status=decision.get("status") or existing.get("status"),
+                        previous_state=existing.get("current_state"),
+                        current_state=decision.get("what_changed") or decision.get("state_delta") or existing.get("current_state"),
+                        confidence=decision.get("confidence") or existing.get("confidence"),
+                        watch=watch,
+                    )
+                    if contradiction:
+                        # Retractions/contradictions are allowed to reduce our
+                        # confidence/evidence in the prior state.
+                        values["materiality"] = float(decision.get("materiality", existing.get("materiality") or 0))
+                        values["evidence_strength"] = float(decision.get("evidence_strength", existing.get("evidence_strength") or 0))
+                    else:
+                        values["materiality"] = max(
+                            float(existing.get("materiality") or 0),
+                            float(decision.get("materiality", 0)),
+                        )
+                        values["evidence_strength"] = max(
+                            float(existing.get("evidence_strength") or 0),
+                            float(decision.get("evidence_strength", 0)),
+                        )
+                    values["novelty"] = float(decision.get("novelty", 0))
                 if report:
                     values["reported_at"] = now
                     values["report_count"] = int(existing.get("report_count") or 0) + 1
+                    values["watch"] = False
                 cx.execute(update(developments).where(developments.c.id == dev_id).values(**values))
             else:
-                values.update(first_seen_at=now, reported_at=now if report else None, report_count=1 if report else 0)
+                values = dict(
+                    canonical_title=decision["canonical_title"],
+                    category=decision["category"],
+                    first_seen_at=now,
+                    last_seen_at=now,
+                    status=decision.get("status"),
+                    previous_state=None,
+                    current_state=decision.get("what_changed") or decision.get("state_delta"),
+                    materiality=float(decision.get("materiality", 0)),
+                    evidence_strength=float(decision.get("evidence_strength", 0)),
+                    novelty=float(decision.get("novelty", 0)),
+                    confidence=decision.get("confidence"),
+                    watch=watch,
+                    reported_at=now if report else None,
+                    report_count=1 if report else 0,
+                    latest_run_id=run_id,
+                )
                 cx.execute(insert(developments).values(id=dev_id, **values))
 
             cx.execute(
@@ -260,7 +304,7 @@ class Database:
                     summary=decision.get("what_changed"),
                     state_delta=decision.get("state_delta"),
                     decision=decision.get("decision"),
-                    materiality=float(decision.get("materiality", 0)),
+                    materiality=float(decision.get("update_materiality", decision.get("materiality", 0))),
                     evidence_strength=float(decision.get("evidence_strength", 0)),
                     novelty=float(decision.get("novelty", 0)),
                     raw=decision,
