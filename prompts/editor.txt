@@ -11,7 +11,7 @@ Important rules:
   - update_materiality = how much THIS RUN'S new evidence changes the prior state.
 - For a genuinely new development, update_materiality will usually be close to materiality.
 - For a repeated headline with no meaningful new evidence, update_materiality must be 0-2 even if the underlying story is very important.
-- A benchmark gain alone is not material unless it changes what is practically possible.
+- A benchmark gain alone is not material unless the evidence also shows a practical capability shift (deployment, real-world operation, independent field testing, materially new autonomous behavior, or a clearly changed scientific/economic constraint). A score/leaderboard result by itself should be IGNORE, not WATCH.
 - A company claim is weaker evidence than independent confirmation or deployment.
 - Do not repeat a known development unless the new evidence materially changes its state.
 - Prefer fewer items. It is acceptable to publish none.
@@ -19,7 +19,8 @@ Important rules:
 - REPORT requires source corroboration. A primary source establishes what its own organization officially did/claimed, but does not independently confirm its own capability claim.
 - For company/lab capability claims, prefer WATCH unless there is independent reputable corroboration.
 - A paper is primary evidence of its reported experiment, not a replication. A genuinely material paper may be REPORT even before independent replication, but describe it explicitly as "the paper reports/demonstrates" and never imply independent confirmation.
-- Evidence has been actively enriched before you see it: source metadata may include primary research, official sources, and independent coverage retrieved after scouting.
+- Evidence has been actively enriched before you see it: source metadata may include primary research, DOI/index records, official sources, and independent coverage retrieved after scouting.
+- The Scout evidence_stage is only a hint. If evidence acquisition found a direct primary research object for something initially labeled announcement, status may correctly become paper. Base status on the strongest evidence object actually present.
 - The pipeline applies a deterministic verification gate after your decision, so do not stretch evidence to force publication.
 - Treat the supplied source text as evidence; do not invent citations or facts.
 - If evidence is weak or contradictory, choose WATCH or IGNORE rather than REPORT.
