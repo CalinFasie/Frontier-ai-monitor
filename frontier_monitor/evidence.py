@@ -110,12 +110,12 @@ def publication_gate(decision: dict[str, Any], profile: dict[str, Any]) -> tuple
     The gate intentionally errs toward WATCH. It never upgrades a model
     decision; it only decides whether a proposed REPORT is publishable.
     """
-    materiality = float(decision.get("materiality", 0))
+    materiality = float(decision.get("update_materiality", decision.get("materiality", 0)))
     evidence_strength = float(decision.get("evidence_strength", 0))
     status = str(decision.get("status") or "").lower()
 
     if materiality < 7:
-        return False, "materiality_below_7"
+        return False, "update_materiality_below_7"
     if evidence_strength < 7:
         return False, "evidence_strength_below_7"
 
@@ -132,7 +132,7 @@ def publication_gate(decision: dict[str, Any], profile: dict[str, Any]) -> tuple
 
     # A law actually enacted or a court ruling can be established by the
     # authoritative legal/government source itself.
-    if status in {"enacted", "court_ruling"}:
+    if status in {"enacted", "court_ruling", "regulatory_order"}:
         if official >= 1 or secondary >= 2:
             return True, "official_legal_source_or_two_independent_secondaries"
         return False, "legal_claim_lacks_official_or_two_independent_secondaries"
