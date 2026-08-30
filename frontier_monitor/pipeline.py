@@ -48,7 +48,7 @@ def collect_and_store(db: Database, cfg: dict[str, Any], settings: Settings) -> 
     return by_topic, stats
 
 
-def _scout_input(topic_key: str, topic_label: str, rows: list[dict[str, Any]], max_rows: int = 20) -> str:
+def _scout_input(topic_key: str, topic_label: str, rows: list[dict[str, Any]], max_rows: int = 12) -> str:
     # Newest first; cap each topic to keep each free-tier request comfortably small.
     rows = sorted(rows, key=lambda r: r.get("published_at") or utcnow(), reverse=True)[:max_rows]
     lines = [f"TOPIC KEY: {topic_key}", f"TOPIC LABEL: {topic_label}", "", "SOURCE RECORDS:"]
@@ -58,21 +58,44 @@ def _scout_input(topic_key: str, topic_label: str, rows: list[dict[str, Any]], m
             f"DATE={_date(r.get('published_at'))}\n"
             f"PUBLISHER={r.get('publisher') or 'unknown'}\n"
             f"TITLE={clip(r.get('title'), 260)}\n"
-            f"SNIPPET={clip(r.get('snippet'), 650) or '[title only; be conservative]'}"
+            f"SNIPPET={clip(r.get('snippet'), 420) or '[title only; be conservative]'}"
         )
     return "\n".join(lines)
 
 
-def run_scout(pool: ProviderPool, topics_cfg: dict[str, Any], by_topic: dict[str, list[dict[str, Any]]]) -> tuple[list[dict[str, Any]], list[ProviderResult]]:
+def run_scout(
+    pool: ProviderPool,
+    topics_cfg: dict[str, Any],
+    by_topic: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], list[ProviderResult], dict[str, str]]:
     system = read_text(ROOT / "prompts/scout.txt")
     all_candidates: list[dict[str, Any]] = []
     results: list[ProviderResult] = []
-    for topic_key, topic in topics_cfg.items():
+    failures: dict[str, str] = {}
+    active_topics = [k for k in topics_cfg if by_topic.get(k)]
+
+    for position, topic_key in enumerate(active_topics):
+        topic = topics_cfg[topic_key]
         rows = by_topic.get(topic_key, [])
-        if not rows:
-            continue
         allowed = {int(r["id"]) for r in rows}
-        result = pool.call("scout", system, _scout_input(topic_key, topic.get("label", topic_key), rows))
+        try:
+            result = pool.call(
+                "scout",
+                system,
+                _scout_input(topic_key, topic.get("label", topic_key), rows),
+            )
+        except Exception as exc:
+            # One free-provider failure must not erase successful scouting in
+            # every other category. We still enforce a minimum-coverage gate in
+            # main.py, so this cannot silently become a false quiet day.
+            failures[topic_key] = str(exc)[:1500]
+            log.error("Scout failed for topic %s: %s", topic_key, exc)
+            if position + 1 < len(active_topics):
+                delay = float(os.getenv("SCOUT_CALL_DELAY_SECONDS", "30"))
+                if delay > 0:
+                    time.sleep(delay)
+            continue
+
         results.append(result)
         for c in result.data.get("candidates", [])[:5]:
             try:
@@ -88,11 +111,16 @@ def run_scout(pool: ProviderPool, topics_cfg: dict[str, Any], by_topic: dict[str
                 all_candidates.append(c)
             except Exception:
                 log.warning("Discarding malformed scout candidate: %r", c)
-        # Groq free-tier TPM is intentionally respected; fallback providers remain available.
-        delay = float(os.getenv("SCOUT_CALL_DELAY_SECONDS", "8"))
-        if delay > 0:
-            time.sleep(delay)
-    return dedupe_candidates(all_candidates), results
+
+        if position + 1 < len(active_topics):
+            # Eight seconds was too aggressive for ~3k-token requests against
+            # an 8k TPM bucket. The v8 default is intentionally conservative.
+            # The prompt is also ~40% smaller than v7.
+            delay = float(os.getenv("SCOUT_CALL_DELAY_SECONDS", "30"))
+            if delay > 0:
+                time.sleep(delay)
+
+    return dedupe_candidates(all_candidates), results, failures
 
 
 def dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
