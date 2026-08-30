@@ -22,7 +22,7 @@ def clip(text: str | None, n: int) -> str:
     value = compact_ws(text)
     if len(value) <= n:
         return value
-    return value[: max(0, n - 1)].rstrip() + "…"
+    return value[: max(0, n - 1)].rstrip() + "..."
 
 
 def canonical_url(url: str) -> str:
