@@ -51,6 +51,7 @@ jobs:
           MIN_DISCOVERY_SUCCESSES: "3"
           MIN_DISCOVERED_SOURCES: "25"
           SCOUT_CALL_DELAY_SECONDS: "8"
+          EDITOR_CALL_DELAY_SECONDS: "65"
         run: python -m frontier_monitor.main
 
       - name: Commit generated brief
