@@ -6,3 +6,5 @@ trafilatura>=2.0
 psycopg[binary]>=3.2
 SQLAlchemy>=2.0
 python-dotenv>=1.0
+jsonschema>=4.25,<5
+tiktoken>=0.12,<1

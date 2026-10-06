@@ -65,6 +65,5 @@ Return JSON only:
       "novelty": 0,
       "confidence": "high|medium|low"
     }
-  ],
-  "bottom_line": "3-6 concise sentences, or a single sentence if nothing material changed"
+  ]
 }

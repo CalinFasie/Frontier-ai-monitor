@@ -13,7 +13,9 @@ providers:
     scout_model: qwen/qwen3.8-27b
     editor_model: openai/gpt-oss-120b
     scout_max_tokens: 650
-    editor_max_tokens: 800
+    # Groq Editor uses strict JSON Schema, low reasoning effort, and maps this
+    # to max_completion_tokens. Schema-inclusive requests are checked locally.
+    editor_max_tokens: 2048
 
   openrouter:
     base_url: https://openrouter.ai/api/v1

@@ -14,6 +14,7 @@ from .config import ROOT, Settings, load_yaml
 from .db import Database
 from .enrich import enrich_sources
 from .evidence import evidence_profile, publication_gate
+from .editor_schema import validate_editor_response
 from .providers import ProviderPool, ProviderResult
 from .utils import clip, read_text, title_similarity, utcnow
 
@@ -376,7 +377,6 @@ def run_editor(
     system = read_text(ROOT / "prompts/editor.txt")
     results: list[ProviderResult] = []
     raw_decisions: list[dict[str, Any]] = []
-    model_bottom_lines: list[str] = []
 
     delay = float(os.getenv("EDITOR_CALL_DELAY_SECONDS", "65"))
     for pos, packet in enumerate(packets):
@@ -388,10 +388,10 @@ def run_editor(
         # over-size request only creates duplicate 429s; genuine provider
         # outages should fail closed rather than silently change the brief.
         result = pool.call("editor", system, user, attempts_per_provider=1)
+        if result.strict_editor:
+            validate_editor_response(result.data, candidate_index=pos)
         results.append(result)
         raw_decisions.extend(result.data.get("decisions", []))
-        if result.data.get("bottom_line"):
-            model_bottom_lines.append(str(result.data.get("bottom_line")))
 
         if pos + 1 < len(packets) and delay > 0:
             time.sleep(delay)
