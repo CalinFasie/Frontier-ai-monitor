@@ -29,6 +29,64 @@ Do not use v9 to:
 - relax REPORT thresholds;
 - broadly refactor unrelated modules.
 
+## Task 0 — coverage continuity and bounded catch-up
+
+### Current behavior
+
+- The production GitHub Actions workflow is scheduled weekly.
+- It sets `LOOKBACK_HOURS=72`, so collection and filtering cover a finite, roughly recent three-day window.
+- There is no durable successfully-covered-through watermark or equivalent catch-up state.
+- Failed runs can therefore leave permanent gaps that a later successful scheduled run does not reconstruct.
+
+### Desired invariant
+
+- A failed or degraded run must never silently advance coverage.
+- A future run must be able to determine that coverage remains unresolved.
+- A healthy empty brief is allowed only after required coverage is complete enough.
+
+### Design requirements before implementation
+
+Define and document:
+
+- `coverage_from` and `coverage_through` semantics;
+- which event advances the successfully-covered-through watermark;
+- semantics for failed and partial windows;
+- bounded catch-up window sizing and ordering;
+- restart/resume behavior;
+- manual rerun behavior;
+- duplicate processing/publication protection;
+- interaction with historical development state;
+- behavior when catch-up cannot finish in one GitHub Actions run;
+- visibility of unresolved gaps in run stats and brief health.
+
+### Rejected simple fix
+
+Changing `LOOKBACK_HOURS` from 72 to 168 or roughly 800 is not sufficient:
+
+- retrieval caps records per topic;
+- Scout sees only a bounded newest subset;
+- large windows can hide older material events under newer records;
+- an outage can exceed any fixed schedule lookback.
+
+Catch-up must process bounded windows and only advance coverage after each window succeeds.
+
+### Required tests
+
+1. Normal healthy scheduled progression.
+2. One failed run followed by successful catch-up.
+3. Several failed runs.
+4. Weekly schedule with no gap.
+5. A large gap split across bounded windows.
+6. Catch-up fails halfway and resumes without losing prior successful windows.
+7. Manual rerun and idempotency.
+8. An unresolved gap cannot render a healthy “no material developments” result.
+9. Reprocessing does not cause duplicate publication.
+10. The watermark does not advance on degraded or failed coverage.
+
+### Backfill
+
+After the catch-up mechanism is implemented and validated, perform a controlled backfill for 2026-09-03 through 2026-10-06. Do not perform this backfill as part of the documentation PR.
+
 ## Task 1 — real CI and correct test command
 
 ### Current behavior

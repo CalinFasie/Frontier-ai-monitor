@@ -31,8 +31,9 @@ Before proposing or implementing a non-trivial change, read:
 3. `docs/EDITORIAL_POLICY.md` — REPORT/WATCH/IGNORE semantics and evidence rules.
 4. `docs/RELIABILITY.md` — operational invariants, known failure modes, and testing philosophy.
 5. `docs/DECISIONS.md` — why important architectural choices were made.
-6. `docs/exec-plans/active/` — active implementation plans, if any.
-7. Relevant code and tests.
+6. `docs/PROJECT_HISTORY.md` — significant incidents, transitions, and validation lessons.
+7. `docs/exec-plans/active/` — active implementation plans, if any.
+8. Relevant code and tests.
 
 If documentation and code disagree, **do not silently choose one**. Identify the discrepancy and state whether the change should update code, documentation, or both.
 
@@ -50,6 +51,8 @@ If documentation and code disagree, **do not silently choose one**. Identify the
 - Never put API keys, database URLs, SMTP passwords, or other secrets in the repository.
 - Do not work directly on `main` for non-trivial changes; use a branch/PR workflow when Git is available.
 - Do not commit unless explicitly requested.
+- Before proposing a new architecture, framework, provider strategy, persistence model, scheduling/coverage model, or major workflow change, search `docs/DECISIONS.md` and `BACKLOG.md` for prior decisions and rejected alternatives. Do not re-propose a rejected approach unless its documented assumptions or revisit condition have materially changed.
+- When work creates or reverses a durable architectural, product, or operational decision, update `docs/DECISIONS.md` in the same PR.
 
 ## Tests
 
@@ -136,6 +139,14 @@ Keep distinctions between:
 - enacted/legal/regulatory action.
 
 See `docs/EDITORIAL_POLICY.md`.
+
+### 7. Coverage continuity (planned invariant)
+
+- Scheduled time is not equivalent to successfully researched time.
+- A failed or degraded run must not silently create a permanent blind interval.
+- An unresolved coverage gap must not be represented as a healthy empty brief.
+
+A persistent coverage watermark and bounded catch-up behavior are planned; they are not implemented yet. See `docs/exec-plans/active/v9-reliability.md`.
 
 ## Data concepts
 
