@@ -1,5 +1,14 @@
--- Reference schema. The application creates these tables automatically via SQLAlchemy.
--- This file documents the logical state model used by the monitor.
+-- Reference schema; this file is documentation, not the migration runner.
+-- SQLAlchemy metadata.create_all() creates the legacy/fresh baseline objects.
+-- Versioned SQL files under sql/migrations/ own schema evolution after that.
+-- schema_migrations and coverage_state are migration-managed, not in SQLAlchemy metadata.
+
+CREATE TABLE schema_migrations (
+  version integer PRIMARY KEY NOT NULL,
+  filename text UNIQUE NOT NULL,
+  checksum text NOT NULL,
+  applied_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE runs (
   id text PRIMARY KEY,
@@ -12,6 +21,13 @@ CREATE TABLE runs (
   editor_model text,
   stats jsonb,
   error text
+);
+
+CREATE TABLE coverage_state (
+  scope text PRIMARY KEY NOT NULL,
+  covered_through timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL,
+  last_run_id varchar(64) REFERENCES runs(id)
 );
 
 CREATE TABLE sources (

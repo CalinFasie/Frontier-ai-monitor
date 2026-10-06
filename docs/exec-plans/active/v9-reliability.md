@@ -1,6 +1,6 @@
 # Execution plan — v9 reliability and evaluation
 
-Status: **PLANNED, NOT IMPLEMENTED**
+Status: **IN PROGRESS — Task 0 Phase 0A implemented; remaining work planned**
 
 This plan is based on inspection of the supplied v8 repository snapshot.
 
@@ -31,7 +31,7 @@ Do not use v9 to:
 
 ## Task 0 — coverage continuity and bounded catch-up
 
-**Status: design only; no coverage mechanism is implemented by this plan.** The requirements below define the contract for later implementation. They do not authorize production execution or a historical backfill.
+**Task 0 status: IN PROGRESS.** Phase 0A now provides versioned migration infrastructure, the dormant `coverage_state` schema, and read-only diagnostics. No coverage baseline is initialized; live window selection and watermark advancement are not implemented. The remaining requirements below define later phases and do not authorize production execution or a historical backfill.
 
 ### Current behavior observed in main
 
@@ -40,7 +40,7 @@ Do not use v9 to:
 - Google News uses a recent-relative when:Nd query; arXiv is sorted by last-updated date with a result cap; RSS consumes current feed entries. These paths do not accept or establish an arbitrary historical interval. The GDELT helper is not used by collect_all.
 - Discovery checks aggregate collector successes and stored-source counts. Scout runs only for topics with sources, and its minimum-success check is capped by active-topic count. A successful empty topic retrieval is therefore not currently represented as an explicit per-topic coverage result.
 - Candidate selection is bounded; evidence acquisition adds relative/targeted retrieval; Editor decisions and development state are persisted before Markdown/email publication. persist_decision updates longitudinal development fields, including publication-like reported_at and report_count semantics for REPORTs.
-- There is no durable coverage watermark. SQLAlchemy metadata.create_all() does not migrate an existing Neon schema.
+- SQLAlchemy metadata.create_all() still creates the legacy/fresh baseline. The explicit migration runner applies numbered SQL files afterward and records their checksums; `coverage_state` is the first migration-managed product table. There is no global coverage row or initialized watermark.
 
 These facts mean that a successful invocation, run timestamp, relative lookback, or publication status cannot establish the exact interval researched. Historical-window behavior must be proven before a future run may claim an interval complete.
 
@@ -99,7 +99,7 @@ coverage_state is operational truth. runs.stats is a per-run audit/diagnostic co
 
 For FAILED or DEGRADED windows, watermark_after equals watermark_before. Store enough run-level detail to diagnose the attempted interval and per-topic retrieval outcomes. Exact stats field names can be chosen during implementation without changing these semantics.
 
-Because the app currently uses SQLAlchemy metadata.create_all(), an explicit migration mechanism is a prerequisite before activating this state in production. Prefer a minimal versioned SQL migration approach, for example sql/migrations/001_coverage_state.sql; do not add Alembic without a measured need. This plan creates no table or migration.
+The persistence/migration foundation is implemented. Legacy/fresh baseline objects continue to use SQLAlchemy metadata.create_all(); repository-owned versioned SQL files under sql/migrations/ are then applied in order and recorded in schema_migrations with version, filename, SHA-256 checksum, and applied_at. An already-applied file is immutable: a filename or checksum mismatch fails startup. coverage_state is not part of SQLAlchemy metadata and is created by 001_coverage_state.sql. Database initialization applies pending migrations after baseline creation. This creates schema only; it does not insert a scope row, establish a baseline, select a window, or advance coverage. Do not add Alembic without a measured need.
 
 ### Historical-window retrieval is a blocker
 
@@ -171,7 +171,7 @@ The semantic decisions above are fixed for the first implementation. These value
 - quantitative source/domain suspiciousness thresholds for Task 4;
 - each collector's verified historical query range, retention, pagination, and truncation behavior;
 - explicit verified bootstrap boundary for the existing deployment;
-- minimal versioned migration runner and audit-finding storage/output format;
+- audit-finding storage/output format;
 - exact run-stat field names and database lock implementation.
 
 Per-domain watermarks, a simultaneous latest-time lane plus historical catch-up lane, and time-travel/as-of database snapshots are explicitly deferred. Reconsider only if measurement demonstrates a need.
@@ -210,9 +210,9 @@ These are requirements for the implementation PR, not tests added here:
 
 ### Staged implementation plan
 
-Do these phases in later implementation work; none is implemented by this plan:
+Phase 0A is implemented in this change. The following phases remain future work:
 
-- **Phase 0A — persistence/migration foundation:** add a minimal migration mechanism, first-class coverage state, and read-only diagnostics.
+- **Phase 0A — persistence/migration foundation — IMPLEMENTED:** versioned SQL migrations, migration history/checksum checks, the migration-managed global coverage_state table, and read-only diagnostics. No coverage row is seeded and no live window selection or watermark advancement exists.
 - **Phase 0B — explicit-window collectors:** pass [from, through) to collectors; verify historical retrieval; add deterministic interval filtering; do not mutate the watermark yet.
 - **Phase 0C — coverage orchestration:** select the oldest required window; implement COMPLETE/DEGRADED/FAILED, advancement, retry/resume, idempotency, and database-level serialization.
 - **Phase 0D — publication boundary:** satisfy the minimal Task 2 prerequisite, separate research completion from publication completion, and expose incomplete-coverage brief semantics.
@@ -333,7 +333,7 @@ Do not over-engineer the state machine if a smaller representation provides the 
 
 ### Migration requirement
 
-If the implementation changes the existing Neon schema, introduce an explicit migration mechanism first. Do not assume SQLAlchemy `create_all()` alters existing schema.
+The repository now has an explicit migration mechanism for schema changes; do not assume SQLAlchemy `create_all()` alters existing schema.
 
 ## Task 4 — domain-level coverage health
 
@@ -438,4 +438,3 @@ After implementation, move this file to:
 `docs/exec-plans/completed/v9-reliability.md`
 
 and update `ARCHITECTURE.md` / `docs/RELIABILITY.md` where implementation details changed.
-
