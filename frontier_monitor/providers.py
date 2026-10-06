@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -8,7 +9,9 @@ from dataclasses import dataclass
 from typing import Any
 
 import requests
+import tiktoken
 
+from .editor_schema import EDITOR_SCHEMA, validate_editor_response
 from .utils import extract_json
 
 log = logging.getLogger(__name__)
@@ -24,6 +27,7 @@ class ProviderResult:
     completion_tokens: int | None = None
     total_tokens: int | None = None
     request_chars: int = 0
+    strict_editor: bool = False
 
 
 class ProviderError(RuntimeError):
@@ -31,6 +35,62 @@ class ProviderError(RuntimeError):
         super().__init__(message)
         self.retryable = retryable
         self.retry_after = retry_after
+
+
+def _unsupported_response_format(response: requests.Response) -> bool:
+    """Only explicit unsupported-format errors justify a legacy compatibility call.
+
+    A validation failure can already have consumed a full generation. Never
+    classify it as an unsupported feature, even if its message mentions format.
+    """
+    try:
+        error = response.json().get("error", {})
+        if not isinstance(error, dict):
+            return False
+        code = str(error.get("code") or "").lower()
+        message = str(error.get("message") or "").lower()
+        param = str(error.get("param") or "").lower()
+        if "validat" in code or error.get("failed_generation") is not None or any(
+            phrase in message for phrase in ("failed to generate", "validation failed", "invalid schema")
+        ):
+            return False
+        mentions_format = param == "response_format" if param else bool(re.search(
+            r"response_format.{0,40}(?:not supported|unsupported)|"
+            r"(?:unsupported parameter|unsupported value|not supported).{0,40}response_format",
+            message,
+        ))
+        explicitly_unsupported = code in {"unsupported_parameter", "unsupported_value"} or any(
+            phrase in message for phrase in ("not supported", "unsupported parameter", "unsupported value")
+        )
+        return mentions_format and explicitly_unsupported
+    except (ValueError, AttributeError):
+        return False
+
+
+def _groq_editor_request_tokens(payload: dict[str, Any]) -> int:
+    """Conservative local estimate, NOT Groq's exact billing/template accounting.
+
+    Count the complete serialized request (including schema/JSON overhead) with
+    GPT-OSS's tokenizer, add 256 tokens for server-side formatting, and reserve
+    the entire completion ceiling. Reject above 7k to leave a further 1k margin
+    below the observed 8k TPM limit. Other quota traffic may still cause 429s.
+    """
+    encoding = tiktoken.get_encoding("o200k_harmony")
+    text = json.dumps(payload, ensure_ascii=True)
+    return len(encoding.encode(text, disallowed_special=())) + 256 + payload["max_completion_tokens"]
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError("Non-finite JSON number")
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON property")
+        result[key] = value
+    return result
 
 
 def _rate_limit_is_request_too_large(text: str) -> bool:
@@ -103,6 +163,7 @@ class OpenAICompatibleProvider:
         user: str,
         timeout: int = 120,
         max_tokens: int = 900,
+        strict_editor: bool = False,
     ) -> ProviderResult:
         url = f"{self.base_url}/chat/completions"
         headers = {
@@ -122,15 +183,50 @@ class OpenAICompatibleProvider:
             "max_tokens": int(max_tokens),
             "response_format": {"type": "json_object"},
         }
+        if strict_editor:
+            if self.name != "groq" or model != "openai/gpt-oss-120b":
+                raise ProviderError("Strict Editor requires Groq openai/gpt-oss-120b", retryable=False)
+            if int(max_tokens) != 2048:
+                raise ProviderError("Groq Editor completion budget must be 2048", retryable=False)
+            payload.pop("max_tokens")
+            payload["max_completion_tokens"] = int(max_tokens)
+            payload["reasoning_effort"] = "low"
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "editor_decision", "strict": True, "schema": EDITOR_SCHEMA},
+            }
+            try:
+                estimated_tokens = _groq_editor_request_tokens(payload)
+            except Exception:
+                # Tokenizer cache/download failures must not block the request.
+                # Do not log exception details: they may contain sensitive URLs.
+                log.warning(
+                    "Groq Editor request token accounting unavailable; proceeding without local "
+                    "preflight check. Provider token limits remain authoritative."
+                )
+            else:
+                if estimated_tokens > 7000:
+                    raise ProviderError(
+                        f"Groq Editor request too large: estimated reserved tokens {estimated_tokens} exceed "
+                        "7000 safety budget (8000 TPM; completion budget 2048); reduce the input packet",
+                        retryable=False,
+                    )
+                log.info("Groq Editor estimated reserved request tokens=%s (safety budget=7000)", estimated_tokens)
         request_chars = len(system) + len(user)
         r = requests.post(url, json=payload, headers=headers, timeout=timeout)
-        if r.status_code >= 400 and r.status_code in (400, 422):
-            # Some OpenAI-compatible free providers do not support
-            # response_format=json_object. Retry once without that optional
-            # feature, but do not do this for 429/TPM failures.
+        if not strict_editor and r.status_code in (400, 422) and _unsupported_response_format(r):
+            # Only a pre-generation unsupported feature warrants this legacy
+            # compatibility path. Validation/generation errors never do.
             payload.pop("response_format", None)
             r = requests.post(url, json=payload, headers=headers, timeout=timeout)
         if r.status_code >= 400:
+            if strict_editor and r.status_code in (400, 422):
+                try:
+                    code = str((r.json().get("error") or {}).get("code") or "invalid_request")
+                except (ValueError, AttributeError):
+                    code = "invalid_request"
+                code = re.sub(r"[^A-Za-z0-9_-]", "", code)[:80]
+                raise ProviderError(f"{self.name} strict Editor HTTP {r.status_code}: {code}", retryable=False)
             text = r.text[:2000]
             if r.status_code == 429:
                 too_large = _rate_limit_is_request_too_large(text)
@@ -152,6 +248,9 @@ class OpenAICompatibleProvider:
             if 500 <= r.status_code < 600:
                 raise ProviderError(f"{self.name} HTTP {r.status_code}: {text}", retryable=True)
             raise ProviderError(f"{self.name} HTTP {r.status_code}: {text}", retryable=False)
+
+        if strict_editor:
+            return self._strict_editor_result(r, model, request_chars)
 
         body = r.json()
         try:
@@ -180,6 +279,35 @@ class OpenAICompatibleProvider:
             completion_tokens=usage.get("completion_tokens"),
             total_tokens=usage.get("total_tokens"),
             request_chars=request_chars,
+        )
+
+    def _strict_editor_result(self, response: requests.Response, model: str, request_chars: int) -> ProviderResult:
+        diagnostics = ""
+        try:
+            body = response.json()
+            usage = body.get("usage") or {}
+            choice = body["choices"][0]
+            finish = choice.get("finish_reason")
+            diagnostics = (
+                f"finish_reason={finish!r}; prompt_tokens={usage.get('prompt_tokens')}; "
+                f"completion_tokens={usage.get('completion_tokens')}; total_tokens={usage.get('total_tokens')}"
+            )
+            if finish != "stop":
+                raise ValueError("incomplete completion")
+            content = choice["message"].get("content")
+            if not isinstance(content, str) or not content.strip():
+                raise ValueError("empty final content")
+            parsed = json.loads(content, parse_constant=_reject_json_constant, object_pairs_hook=_unique_json_object)
+            validate_editor_response(parsed)
+        except Exception as exc:
+            reason = str(exc) if isinstance(exc, ValueError) and not isinstance(exc, json.JSONDecodeError) else "malformed response"
+            raise ProviderError(
+                f"Groq strict Editor failed: {reason}; {diagnostics}", retryable=False,
+            ) from exc
+        return ProviderResult(
+            data=parsed, provider=self.name, requested_model=model, actual_model=body.get("model") or model,
+            prompt_tokens=usage.get("prompt_tokens"), completion_tokens=usage.get("completion_tokens"),
+            total_tokens=usage.get("total_tokens"), request_chars=request_chars, strict_editor=True,
         )
 
 
@@ -223,6 +351,8 @@ class ProviderPool:
 
         if attempts_per_provider is None:
             attempts_per_provider = 2 if role == "scout" else 1
+        if role == "editor":
+            attempts_per_provider = 1
 
         for provider_index, (name, provider, cfg) in enumerate(eligible):
             model = cfg[f"{role}_model"]
@@ -234,6 +364,7 @@ class ProviderPool:
                         system=system,
                         user=user,
                         max_tokens=max_tokens,
+                        strict_editor=(name == "groq" and role == "editor"),
                     )
                 except ProviderError as exc:
                     errors.append(f"{name}/{model}: {exc}")
