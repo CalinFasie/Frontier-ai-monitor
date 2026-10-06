@@ -418,3 +418,56 @@ As appropriate to the change, validate workflow/job success, the expected model/
 **Revisit condition**
 
 Choose the evidence proportionally to the production behavior a change can affect.
+
+
+---
+
+## D024 — Coverage uses explicit temporal windows
+
+**Decision**
+
+Coverage is represented by explicit half-open [from, through) intervals and a persistent covered-through watermark. Only a COMPLETE research window advances that watermark. The durable coverage state is operational truth; runs.stats is a per-run audit record.
+
+**Reason**
+
+Relative lookbacks and successful workflow invocations cannot prove which contiguous time interval was researched, especially after failure or when retrieval is capped.
+
+**Consequence**
+
+Collectors must establish coverage for the requested interval before it can advance. Use one global scope initially; per-domain watermarks remain deferred. See Task 0 in the active v9 reliability plan.
+
+---
+
+## D025 — Research completion is distinct from publication completion
+
+**Decision**
+
+A research interval can be COMPLETE after its decisions and research state are durably persisted, even if downstream Markdown, Git, or email publication fails.
+
+**Reason**
+
+Delivery failure should not make the system research the same completed interval again. Current Editor persistence occurs before human-facing publication and includes fields with publication-like semantics.
+
+**Consequence**
+
+Live watermark advancement depends on a minimal Task 2 prerequisite: research completion must be independently and retry-safely committed without falsely finalizing publication state. This decision does not implement the broader Task 2 data model.
+
+---
+
+## D026 — Historical replay must not corrupt present state
+
+**Decision**
+
+Backfills over already-passed historical periods must not run naively through the normal state-mutating pipeline when newer development state already exists. The Sep 3–Oct 6 gap is initially processed as a retrospective audit.
+
+**Reason**
+
+Applying older observations after the successful Oct 6 run can introduce temporal leakage and mutate current development state or publication counters out of order.
+
+**Consequence**
+
+The initial audit uses bounded chronological windows, does not advance the live watermark, mutate current development state, increment report counters, or automatically republish historical REPORTs. Findings go to human review; reconciliation is a later explicit action/design. A time-travel-aware replay system is deferred unless needed.
+
+**Rejected alternative**
+
+Replay Sep 3–Oct 6 through the normal state-mutating path against the current database.

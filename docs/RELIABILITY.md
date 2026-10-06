@@ -17,6 +17,10 @@ B. degraded/failed research that happened to produce no REPORT items
 
 Confusing B with A is one of the most dangerous failure modes.
 
+## Coverage continuity
+
+A successfully invoked run is not proof of successfully covered time. An unresolved interval cannot be interpreted as a quiet period or support healthy-empty wording. Explicit interval, durable watermark, and recovery semantics are planned in v9 Task 0; they are not implemented in the current system.
+
 ## Critical failure modes
 
 The project design has identified these as especially important:

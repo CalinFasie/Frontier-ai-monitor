@@ -11,7 +11,7 @@ See `docs/exec-plans/active/v9-reliability.md`.
 - [ ] Persist a coverage watermark or equivalent successfully-covered-through state.
 - [ ] Add bounded automatic catch-up after failed or degraded runs.
 - [ ] Prevent healthy empty-brief semantics while required coverage gaps remain unresolved.
-- [ ] After the safe catch-up mechanism exists and is validated, backfill the missing 2026-09-03 through 2026-10-06 interval.
+- [ ] Process the missing 2026-09-03 through 2026-10-06 interval as a retrospective audit/backfill; do not replay it through the normal state-mutating catch-up path.
 
 - [ ] Add real pytest CI for pull requests/pushes.
 - [ ] Correct documentation/Makefile test command.
