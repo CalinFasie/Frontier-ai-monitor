@@ -29,6 +29,11 @@ from .utils import utcnow
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Frontier AI change-detection monitor")
     p.add_argument("--collect-only", action="store_true", help="Collect and persist sources without calling an LLM")
+    p.add_argument(
+        "--coverage-status",
+        action="store_true",
+        help="Print read-only coverage persistence diagnostics and exit",
+    )
     return p.parse_args()
 
 
@@ -39,6 +44,11 @@ def main() -> int:
     if os.getenv("GITHUB_ACTIONS", "").lower() == "true" and not os.getenv("DATABASE_URL", "").strip():
         raise RuntimeError("DATABASE_URL is required in GitHub Actions so state persists between runs")
     settings = Settings.from_env()
+    if args.coverage_status:
+        db = Database(settings.database_url)
+        print(json.dumps(db.get_coverage_diagnostics(), indent=2))
+        return 0
+
     topics_cfg = load_yaml("config/topics.yaml")
     model_cfg = load_yaml("config/models.yaml")
     db = Database(settings.database_url)

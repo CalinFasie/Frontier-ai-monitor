@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from sqlalchemy import (
@@ -19,10 +19,12 @@ from sqlalchemy import (
     delete,
     insert,
     select,
+    text,
     update,
 )
 from sqlalchemy.engine import Engine
 
+from .migrations import apply_migrations
 from .utils import development_id, utcnow
 
 
@@ -132,6 +134,60 @@ class Database:
     def __init__(self, url: str):
         self.engine: Engine = create_engine(url, future=True, pool_pre_ping=True)
         metadata.create_all(self.engine)
+        apply_migrations(self.engine)
+
+    @staticmethod
+    def _coverage_timestamp_iso(value: Any) -> str:
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, str):
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        else:
+            raise TypeError(f"Unsupported coverage timestamp value: {type(value).__name__}")
+        # SQLite may return a naive value for a timezone-aware logical timestamp.
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        else:
+            parsed = parsed.astimezone(timezone.utc)
+        return parsed.isoformat().replace("+00:00", "Z")
+
+    def get_coverage_state(self, scope: str = "global") -> dict[str, Any] | None:
+        with self.engine.connect() as cx:
+            row = cx.execute(
+                text(
+                    "SELECT scope, covered_through, updated_at, last_run_id "
+                    "FROM coverage_state WHERE scope = :scope"
+                ),
+                {"scope": scope},
+            ).mappings().first()
+        if row is None:
+            return None
+        return {
+            "scope": str(row["scope"]),
+            "covered_through": self._coverage_timestamp_iso(row["covered_through"]),
+            "updated_at": self._coverage_timestamp_iso(row["updated_at"]),
+            "last_run_id": row["last_run_id"],
+        }
+
+    def get_coverage_diagnostics(self, scope: str = "global") -> dict[str, Any]:
+        state = self.get_coverage_state(scope)
+        if state is None:
+            return {
+                "scope": scope,
+                "schema_ready": True,
+                "initialized": False,
+                "covered_through": None,
+                "updated_at": None,
+                "last_run_id": None,
+            }
+        return {
+            "scope": state["scope"],
+            "schema_ready": True,
+            "initialized": True,
+            "covered_through": state["covered_through"],
+            "updated_at": state["updated_at"],
+            "last_run_id": state["last_run_id"],
+        }
 
     def start_run(self, run_id: str) -> None:
         with self.engine.begin() as cx:

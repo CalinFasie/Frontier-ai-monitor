@@ -28,7 +28,7 @@ See `docs/exec-plans/active/v9-reliability.md`.
 - [ ] Add deterministic/direct source adapters for high-value primary sources.
 - [ ] Measure source/category coverage over time.
 - [ ] Measure REPORT/WATCH/IGNORE distribution and editorial regressions.
-- [ ] Add explicit schema migration mechanism before the first real Neon schema alteration.
+- [x] Add explicit schema migration mechanism before the first real Neon schema alteration.
 - [ ] Review provider-specific request parameters instead of assuming one OpenAI-compatible payload is optimal for every provider.
 
 ## P2 — only after evaluation exists
@@ -50,4 +50,3 @@ Do not add merely for sophistication:
 - Kubernetes/permanent server infrastructure.
 
 Any of these can be revisited if a concrete measured need appears.
-

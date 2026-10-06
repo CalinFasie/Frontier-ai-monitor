@@ -1,6 +1,6 @@
 # Frontier AI Monitor — Architecture
 
-Status: documents the supplied **v8 code snapshot**.
+Status: documents the **v8 research pipeline** and the dormant Task 0 Phase 0A persistence foundation.
 
 For intended product semantics, see `docs/PRODUCT.md`.
 For editorial rules, see `docs/EDITORIAL_POLICY.md`.
@@ -262,9 +262,18 @@ Rendered human-facing brief for a run.
 ### `runs`
 Operational run state, providers/models, stats, and errors.
 
+### `coverage_state`
+Migration-managed global coverage watermark schema. Phase 0A does not seed a row, choose live windows, or advance `covered_through`.
+
 The database is the machine source of truth for longitudinal state.
 
 Markdown briefs are the human-readable archive.
+
+### Schema initialization and coverage diagnostics
+
+`metadata.create_all()` continues to create the legacy/fresh baseline tables. Afterward, `Database` applies ordered SQL migrations from `sql/migrations/`; `schema_migrations` records each applied version, filename, SHA-256 checksum, and timestamp. Migration-owned objects are kept out of SQLAlchemy baseline metadata, and applied migration files must not be edited.
+
+Migration 001 creates `coverage_state` without inserting a global row. `python -m frontier_monitor.main --coverage-status` prints the current read-only state after ensuring migrations are applied. It does not start a run or invoke collection, Scout, evidence acquisition, Editor, or publication. Live coverage selection and watermark advancement remain unimplemented.
 
 ## Brief archive
 
@@ -336,4 +345,3 @@ Rationale / why:
 Work not yet implemented:
   docs/exec-plans/active/
 ```
-
