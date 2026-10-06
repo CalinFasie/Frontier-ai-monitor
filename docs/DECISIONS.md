@@ -295,3 +295,126 @@ The system is already feature-rich enough that unmeasured changes can easily mak
 
 See `docs/exec-plans/active/v9-reliability.md`.
 
+---
+
+## D019 — Provider/editor contract changes fail closed
+
+**Decision**
+
+Final editorial provider integrations must define an explicit output contract and fail closed on malformed, truncated, or schema-invalid output. Provider compatibility changes that affect final editorial judgment require deterministic/local tests and, when practical, a live provider smoke test before or around deployment.
+
+**Reason**
+
+OpenAI-compatible APIs are not behaviorally identical. The September–October 2026 Editor incident showed that transport success does not guarantee usable structured editorial output.
+
+**Consequence**
+
+Do not silently remove structured-output constraints in response to generic HTTP 400/422 errors, and do not infer production compatibility from mocks or unit tests alone.
+
+**Rejected alternatives**
+
+- Retry final editorial generation without its contract after a generic client error.
+- Treat successful HTTP transport or mocked tests as sufficient proof of provider compatibility.
+
+**Revisit condition**
+
+Revisit the contract only when provider behavior or the editorial response shape changes, with evidence and tests that preserve fail-closed handling.
+
+---
+
+## D020 — Coverage continuity follows successfully covered time
+
+**Decision**
+
+The monitor must eventually track a persistent coverage watermark, or equivalent semantic state, for the interval successfully covered.
+
+**Reason**
+
+Schedule cadence and lookback duration can diverge, and provider or research failures can leave gaps.
+
+**Consequence**
+
+A failed or degraded run must not advance the point through which coverage is considered complete. The next healthy processing must account for unresolved time since the last confirmed coverage point. This behavior is planned, not implemented.
+
+**Rejected alternatives**
+
+- Treat a scheduled run as proof that its time interval was researched.
+- Advance coverage on a failed or partial run.
+
+**Revisit condition**
+
+Revisit the stored representation during implementation if another durable state model preserves the same successfully-covered-through semantics.
+
+---
+
+## D021 — Unresolved coverage gaps cannot produce a healthy empty conclusion
+
+**Decision**
+
+“No material frontier developments since the previous review” is valid only when the relevant interval has healthy, sufficiently complete coverage.
+
+**Reason**
+
+A quiet result and an unresearched interval are different states.
+
+**Consequence**
+
+An unresolved gap must produce an explicit degraded/incomplete state, a catch-up requirement, or an equivalent representation; it must not be presented as a healthy empty brief.
+
+**Rejected alternatives**
+
+- Reuse healthy-empty wording when retrieval only covers a recent subset of the interval.
+
+**Revisit condition**
+
+Revisit the user-facing representation if a different status still makes the unresolved coverage gap explicit.
+
+---
+
+## D022 — Catch-up uses bounded resumable windows
+
+**Decision**
+
+Large coverage gaps should be processed in bounded time windows, with coverage advanced only after successful window processing.
+
+**Reason**
+
+Retrieval has per-topic caps and Scout sees only a bounded newest subset. A single large lookback can bury older events under newer records and still provide false coverage.
+
+**Consequence**
+
+The future v9 implementation must define resumable bounded catch-up semantics. Increasing `LOOKBACK_HOURS` alone is not a recovery mechanism.
+
+**Rejected alternatives**
+
+- Change `LOOKBACK_HOURS` from 72 to 168 and assume one week is enough.
+- Set `LOOKBACK_HOURS` to roughly 800 for a month-long gap.
+- Assume the next scheduled run can recover every outage in one retrieval pass.
+
+**Revisit condition**
+
+Window sizing may change based on measured retrieval limits, but catch-up must remain bounded, resumable, and evidence-backed.
+
+---
+
+## D023 — Production validation checks semantic side effects
+
+**Decision**
+
+For changes affecting production inference, persistence, or publication, validation should inspect relevant observable side effects as well as workflow status.
+
+**Reason**
+
+A green workflow can coexist with incorrect semantic output, missing persistent state, or absent expected artifacts.
+
+**Consequence**
+
+As appropriate to the change, validate workflow/job success, the expected model/provider path, persistent run state, generated brief/artifact, and publication/commit side effects. Keep validation proportional; documentation-only PRs do not require production validation.
+
+**Rejected alternatives**
+
+- Treat a successful Actions conclusion as complete evidence for every production behavior.
+
+**Revisit condition**
+
+Choose the evidence proportionally to the production behavior a change can affect.

@@ -302,13 +302,12 @@ Provider availability and free-tier limits are external operational dependencies
 
 Workflow:
 
-`.github/workflows/frontier-monitor.yml`
+`.github/workflows/main.yml`
 
 Current v8 deployment:
 
 - GitHub Actions;
-- scheduled daily;
-- `Europe/Bucharest` timezone;
+- scheduled weekly on Mondays at 07:00 (`Europe/Bucharest`);
 - manual `workflow_dispatch`;
 - Neon/Postgres required in GitHub Actions;
 - generated brief files are committed back to the repository.
