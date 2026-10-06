@@ -40,9 +40,11 @@ caps and estimates 5464 reserved tokens. Unbounded URL input is also tested to f
 before generation. No claim is made that all future packets fit.
 
 Runtime additions: jsonschema (local contract validation) and tiktoken (local token
-accounting). On first use tiktoken may download public encoding data; a missing or
-unavailable tokenizer fails closed. Deployments with restricted networking should
-prewarm the o200k_harmony cache and set TIKTOKEN_CACHE_DIR if needed.
+accounting). On first use tiktoken may download public encoding data. If tokenizer
+initialization/accounting fails, log a warning without exception details and proceed
+with the unchanged strict request; provider rejection still fails closed without
+retries. Successful accounting still enforces the 7000-token preflight cap.
+Deployments may prewarm the o200k_harmony cache and set TIKTOKEN_CACHE_DIR if needed.
 
 ## Verification and unchanged behavior
 

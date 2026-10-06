@@ -11,7 +11,7 @@ from frontier_monitor.providers import (
     ProviderError, ProviderPool, _groq_editor_request_tokens,
 )
 from frontier_monitor.utils import read_text
-from test_editor_provider import completion, decision, mock_posts
+from test_editor_provider import Response, completion, decision, mock_posts
 
 
 class PacketDB:
@@ -150,11 +150,37 @@ def test_scout_payload_and_reasoning_compatibility_remain_unchanged(monkeypatch)
     assert "reasoning_effort" not in calls[0]
 
 
-def test_accounting_failure_prevents_generation(monkeypatch):
+@pytest.mark.parametrize("failure_target", [
+    "frontier_monitor.providers.tiktoken.get_encoding",
+    "frontier_monitor.providers._groq_editor_request_tokens",
+])
+def test_accounting_failure_warns_and_allows_one_request(monkeypatch, caplog, failure_target):
+    def unavailable(_):
+        raise OSError("PRIVATE-SECRET tokenizer failure details")
+
+    monkeypatch.setattr(failure_target, unavailable)
+    calls = mock_posts(monkeypatch, completion())
+    result = pool(monkeypatch).call("editor", "s", "u")
+    assert result.strict_editor is True
+    assert len(calls) == 1
+    assert calls[0]["max_completion_tokens"] == 2048
+    assert calls[0]["response_format"]["json_schema"]["strict"] is True
+    assert any(r.levelname == "WARNING" and "accounting unavailable" in r.message for r in caplog.records)
+    assert "PRIVATE-SECRET" not in caplog.text
+
+
+@pytest.mark.parametrize("status,error", [
+    (400, {"code": "json_validate_failed"}),
+    (429, {"code": "rate_limit_exceeded", "message": "Rate limit reached. Limit 8000, Requested 6000."}),
+    (429, {"code": "rate_limit_exceeded", "message": "Request too large. Limit 8000, Requested 9000."}),
+])
+def test_provider_rejection_after_accounting_failure_still_fails_closed(monkeypatch, status, error):
     def unavailable(_):
         raise OSError("tokenizer unavailable")
 
     monkeypatch.setattr("frontier_monitor.providers.tiktoken.get_encoding", unavailable)
-    monkeypatch.setattr("frontier_monitor.providers.requests.post", lambda *a, **k: pytest.fail("request sent without accounting"))
-    with pytest.raises(ProviderError, match="accounting unavailable"):
+    calls = mock_posts(monkeypatch, Response(status, {"error": error}))
+    monkeypatch.setattr("frontier_monitor.providers.time.sleep", lambda _: pytest.fail("unexpected retry"))
+    with pytest.raises(ProviderError):
         pool(monkeypatch).call("editor", "s", "u")
+    assert len(calls) == 1

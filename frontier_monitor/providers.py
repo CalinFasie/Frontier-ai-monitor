@@ -197,15 +197,21 @@ class OpenAICompatibleProvider:
             }
             try:
                 estimated_tokens = _groq_editor_request_tokens(payload)
-            except Exception as exc:
-                raise ProviderError("Groq Editor request token accounting unavailable", retryable=False) from exc
-            if estimated_tokens > 7000:
-                raise ProviderError(
-                    f"Groq Editor request too large: estimated reserved tokens {estimated_tokens} exceed "
-                    "7000 safety budget (8000 TPM; completion budget 2048); reduce the input packet",
-                    retryable=False,
+            except Exception:
+                # Tokenizer cache/download failures must not block the request.
+                # Do not log exception details: they may contain sensitive URLs.
+                log.warning(
+                    "Groq Editor request token accounting unavailable; proceeding without local "
+                    "preflight check. Provider token limits remain authoritative."
                 )
-            log.info("Groq Editor estimated reserved request tokens=%s (safety budget=7000)", estimated_tokens)
+            else:
+                if estimated_tokens > 7000:
+                    raise ProviderError(
+                        f"Groq Editor request too large: estimated reserved tokens {estimated_tokens} exceed "
+                        "7000 safety budget (8000 TPM; completion budget 2048); reduce the input packet",
+                        retryable=False,
+                    )
+                log.info("Groq Editor estimated reserved request tokens=%s (safety budget=7000)", estimated_tokens)
         request_chars = len(system) + len(user)
         r = requests.post(url, json=payload, headers=headers, timeout=timeout)
         if not strict_editor and r.status_code in (400, 422) and _unsupported_response_format(r):
