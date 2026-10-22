@@ -471,3 +471,19 @@ The initial audit uses bounded chronological windows, does not advance the live 
 **Rejected alternative**
 
 Replay Sep 3–Oct 6 through the normal state-mutating path against the current database.
+
+---
+
+## D027 — Version schema evolution with repository-owned SQL migrations
+
+**Decision**
+
+Keep SQLAlchemy `metadata.create_all()` for the existing legacy/fresh baseline, and use small, ordered SQL migration files for schema evolution. Record applied versions and SHA-256 checksums; applied migration files are immutable. Do not add Alembic without a measured need.
+
+**Reason**
+
+`create_all()` can create missing tables but is not a migration mechanism for evolving an existing Neon schema. The project needs a deterministic, auditable path for schema changes without introducing a framework.
+
+**Consequence**
+
+The migration runner applies repository migrations after baseline initialization. `coverage_state` is the first migration-managed product table. The runner creates no coverage row; a missing row means no verified baseline has been established. See Task 0 Phase 0A in the active v9 reliability plan.

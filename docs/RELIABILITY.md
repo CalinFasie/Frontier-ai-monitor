@@ -282,8 +282,8 @@ Whenever a model or provider changes materially:
 
 ## Database schema evolution
 
-The v8 application uses SQLAlchemy `create_all()` for initialization.
+The legacy/fresh baseline still uses SQLAlchemy `metadata.create_all()` for initialization. A small repository-owned SQL migration runner now applies numbered files from `sql/migrations/` afterward and records version, filename, SHA-256 checksum, and applied time in `schema_migrations`.
 
-`create_all()` is not a migration framework.
+An already-applied migration is immutable: startup fails clearly if its file is missing, renamed, or has a changed checksum. Do not edit applied migration files; add a later version instead. `coverage_state`, created by migration 001, is the first migration-managed product table.
 
-Before making a schema change to an existing Neon deployment, add an explicit migration strategy (for example Alembic or small versioned migrations) instead of assuming `create_all()` will alter existing columns/tables safely.
+`python -m frontier_monitor.main --coverage-status` applies pending migrations and prints read-only diagnostics without starting a monitor run. The global coverage row is intentionally absent until a verified baseline is explicitly established. This persistence foundation does not yet select live coverage windows or advance a watermark.

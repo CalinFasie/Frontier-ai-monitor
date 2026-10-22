@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -113,7 +114,20 @@ def maximum_packet(monkeypatch):
     return result
 
 
+def use_offline_test_tokenizer(monkeypatch):
+    """Keep request-budget unit tests hermetic without downloading BPE data."""
+    class OfflineEncoding:
+        def encode(self, value, disallowed_special=()):
+            return [0] * math.ceil(len(value) / 6)
+
+    monkeypatch.setattr(
+        "frontier_monitor.providers.tiktoken.get_encoding",
+        lambda _name: OfflineEncoding(),
+    )
+
+
 def test_maximum_representative_packet_includes_schema_and_completion_accounting(monkeypatch):
+    use_offline_test_tokenizer(monkeypatch)
     data = maximum_packet(monkeypatch)
     calls = mock_posts(monkeypatch, completion())
     user = "EVALUATE EXACTLY THIS ONE CANDIDATE. Preserve candidate_index in your JSON response.\n" + json.dumps(data, ensure_ascii=False)
@@ -130,6 +144,7 @@ def test_maximum_representative_packet_includes_schema_and_completion_accounting
 
 
 def test_oversized_packet_fails_before_any_generation(monkeypatch):
+    use_offline_test_tokenizer(monkeypatch)
     data = maximum_packet(monkeypatch)
     # URLs are not clipped by the current packet builder; account for them too.
     data["sources"][0]["url"] = "https://example.org/" + "a1b2c3/" * 6000

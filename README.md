@@ -144,6 +144,14 @@ DATABASE_URL=...
 
 For local testing only, `DATABASE_URL` can be left blank; the app will use `frontier_monitor.db` SQLite. GitHub Actions deliberately requires a persistent database so history is not silently lost between ephemeral runners.
 
+### Inspect coverage persistence without a monitor run
+
+```bash
+python -m frontier_monitor.main --coverage-status
+```
+
+This applies pending schema migrations and prints JSON coverage diagnostics. On a new database, `initialized` is `false` and `covered_through` is `null`; the command does not create a run or call collection, model, or publication code. It does not initialize or advance the watermark.
+
 ### Test collection without inference
 
 ```bash
@@ -226,6 +234,12 @@ The final published brief.
 
 ### `runs`
 Operational status, providers/models used, collector health, and errors.
+
+### `coverage_state`
+Migration-managed coverage watermark schema. Its global row remains absent until a verified baseline is explicitly established.
+
+### `schema_migrations`
+Migration history and checksums for versioned schema changes.
 
 The logical SQL schema is also documented in `sql/schema.sql`.
 
