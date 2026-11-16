@@ -1,4 +1,4 @@
-# Frontier AI Brief - 2026-11-09
+# Frontier AI Brief - 2026-11-16
 
 No material frontier developments since the previous review.
 
